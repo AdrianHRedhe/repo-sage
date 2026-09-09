@@ -1,0 +1,7 @@
+# One repo name per line, owned by GITHUB_USER (see .env). Lines starting
+# with # are ignored.
+#
+# Leave this file empty to sync every public, non-fork repo owned by
+# GITHUB_USER instead - useful once the pipeline is trusted, but during
+# development it's better to list a repo or two here so `sync` stays fast
+# and doesn't pull down your whole account.
