@@ -3,10 +3,9 @@
 Clone a GitHub user's public repos and build a local, chunk-aware knowledge
 base to answer questions about their code.
 
-**Status:** early stage. This first slice fetches a user's repos, clones/
-updates them locally, and filters each one down to the files worth chunking.
-Tree-sitter based chunking, embeddings, and a local vector store (Chroma) are
-planned next.
+**Status:** early stage. Repos get synced, filtered, and chunked into
+function/class-scoped pieces with surrounding context. Embeddings and a
+local vector store (Chroma) are planned next.
 
 ## How it works (so far)
 
@@ -20,6 +19,14 @@ planned next.
    own `.gitignore` handling (`git ls-files`) and narrows further to known
    source-code extensions, dropping lockfiles, minified bundles, and
    anything unusually large.
+4. Chunk each file. Languages with a tree-sitter query
+   (`src/reposage/chunking/queries/`) get split at function/method/class
+   boundaries, with a bit of surrounding context attached - a method's chunk
+   is tagged with its enclosing class/struct name, and Python decorators
+   stay attached to the function they decorate. Currently covers Python, Go,
+   and Scala. Anything else (including non-code files like `README.md`)
+   falls back to fixed-size overlapping line windows, so every included file
+   always produces at least one chunk.
 
 ## Setup
 
@@ -50,6 +57,9 @@ uv run repo-sage sync
 
 # See the filtered file list for one repo (sanity check before chunking)
 uv run repo-sage list-files <repo-name>
+
+# See the chunks that would be produced for one repo
+uv run repo-sage chunks <repo-name>
 ```
 
 ## Development
