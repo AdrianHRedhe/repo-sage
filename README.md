@@ -3,9 +3,9 @@
 Clone a GitHub user's public repos and build a local, chunk-aware knowledge
 base to answer questions about their code.
 
-**Status:** early stage. Repos get synced, filtered, and chunked into
-function/class-scoped pieces with surrounding context. Embeddings and a
-local vector store (Chroma) are planned next.
+**Status:** early stage. Repos get synced, filtered, chunked, embedded, and
+stored in a local vector store, so free-text search over the chunks already
+works. An LLM-answer layer with citations is planned next.
 
 ## How it works (so far)
 
@@ -27,6 +27,12 @@ local vector store (Chroma) are planned next.
    and Scala. Anything else (including non-code files like `README.md`)
    falls back to fixed-size overlapping line windows, so every included file
    always produces at least one chunk.
+5. Embed each chunk with a local model (Qwen3-Embedding by default - fully
+   local, no third-party API) and store it in a local Chroma collection
+   shared across every repo. Re-running `embed` is cheap: chunks whose
+   content hasn't changed since the last run are skipped, not
+   re-embedded, and chunks that no longer exist (renamed/deleted functions
+   or files) are pruned from the collection.
 
 ## Setup
 
@@ -45,9 +51,17 @@ Edit `.env`:
   `repos.txt` empty, since that triggers a REST call to list every repo, and
   a token raises that rate limit from 60/hr to 5000/hr. A classic PAT with no
   scopes checked is enough - create one at https://github.com/settings/tokens.
+- `EMBEDDING_MODEL` - optional, defaults to `Qwen/Qwen3-Embedding-0.6B`.
+  Any local sentence-transformers-compatible model name works; larger Qwen3-
+  Embedding variants (4B/8B) give better retrieval quality if you have a GPU
+  (or patience).
 
 Edit `repos.txt` to list the repos you want included (see comments in the
 file for the format).
+
+`chromadb` and `sentence-transformers` are sizeable installs (they pull in
+`torch`), and the first `embed` run downloads the embedding model's weights
+(a few hundred MB for the default model).
 
 ## Usage
 
@@ -60,6 +74,12 @@ uv run repo-sage list-files <repo-name>
 
 # See the chunks that would be produced for one repo
 uv run repo-sage chunks <repo-name>
+
+# Chunk, embed, and store one repo's files locally
+uv run repo-sage embed <repo-name>
+
+# Search embedded chunks across every repo (or one, with --repo)
+uv run repo-sage search "how does X work" --limit 5
 ```
 
 ## Development

@@ -2,8 +2,11 @@ import click
 
 from reposage.chunking.chunk_file import chunk_file
 from reposage.config import load_config
+from reposage.embedding.model import Embedder
 from reposage.filters.include import list_included_files
 from reposage.filters.languages import language_for
+from reposage.index import index_repo
+from reposage.store.chroma_store import ChromaStore
 from reposage.sync import sync_repos
 
 
@@ -60,3 +63,48 @@ def chunks(repo_name: str) -> None:
             if chunk.parent_symbol:
                 label = f"{chunk.parent_symbol}.{label}"
             click.echo(f"{chunk.file_path}:{chunk.start_line}-{chunk.end_line}  {chunk.node_type:<10} {label}")
+
+
+@main.command()
+@click.argument("repo_name")
+def embed(repo_name: str) -> None:
+    """Chunk, embed, and store one synced repo's files in the local Chroma collection."""
+    config = load_config()
+    repo_path = config.repos_dir / repo_name
+    if not repo_path.exists():
+        raise click.ClickException(
+            f"'{repo_name}' not found under {config.repos_dir}. Run `repo-sage sync` first."
+        )
+
+    stats = index_repo(config, repo_name)
+    click.echo(
+        f"Embedded {stats.embedded}, skipped {stats.skipped} unchanged, "
+        f"deleted {stats.deleted} stale chunk(s) into {config.chroma_dir}"
+    )
+
+
+@main.command()
+@click.argument("query")
+@click.option("--repo", default=None, help="Only search chunks from this repo.")
+@click.option("--limit", default=10, show_default=True, help="Number of results to show.")
+def search(query: str, repo: str | None, limit: int) -> None:
+    """Search embedded chunks for the closest matches to a free-text query."""
+    config = load_config()
+    embedder = Embedder(config.embedding_model)
+    store = ChromaStore(config.chroma_dir)
+
+    result = store.query(embedder.embed_query(query), n_results=limit, repo=repo)
+
+    ids = result["ids"][0]
+    if not ids:
+        click.echo("No results. Have you run `repo-sage embed <repo>` yet?")
+        return
+
+    for id_, metadata, distance in zip(ids, result["metadatas"][0], result["distances"][0]):
+        label = metadata["symbol"] or "(file)"
+        if metadata["parent_symbol"]:
+            label = f"{metadata['parent_symbol']}.{label}"
+        click.echo(
+            f"{distance:.3f}  {metadata['repo']}/{metadata['file_path']}"
+            f":{metadata['start_line']}-{metadata['end_line']}  {label}"
+        )

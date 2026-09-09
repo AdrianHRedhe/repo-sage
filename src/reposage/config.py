@@ -6,6 +6,8 @@ import os
 
 load_dotenv()
 
+DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+
 
 @dataclass(frozen=True)
 class Config:
@@ -13,10 +15,15 @@ class Config:
     github_token: str
     data_dir: Path
     repos_file: Path
+    embedding_model: str
 
     @property
     def repos_dir(self) -> Path:
         return self.data_dir / "repos"
+
+    @property
+    def chroma_dir(self) -> Path:
+        return self.data_dir / "chroma"
 
 
 def load_config() -> Config:
@@ -33,10 +40,12 @@ def load_config() -> Config:
 
     data_dir = Path(os.environ.get("DATA_DIR", "./data")).resolve()
     repos_file = Path(os.environ.get("REPOS_FILE", "./repos.txt")).resolve()
+    embedding_model = os.environ.get("EMBEDDING_MODEL", "").strip() or DEFAULT_EMBEDDING_MODEL
 
     return Config(
         github_user=github_user,
         github_token=github_token,
         data_dir=data_dir,
         repos_file=repos_file,
+        embedding_model=embedding_model,
     )
