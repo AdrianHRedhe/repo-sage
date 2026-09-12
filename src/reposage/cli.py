@@ -1,5 +1,7 @@
 import click
 
+from reposage.answer import answer_question
+from reposage.chunking.chunk import format_symbol_label
 from reposage.chunking.chunk_file import chunk_file
 from reposage.config import load_config
 from reposage.embedding.model import Embedder
@@ -59,9 +61,7 @@ def chunks(repo_name: str) -> None:
             continue
 
         for chunk in chunk_file(repo_name, repo_path, rel_path, language):
-            label = chunk.symbol or "(file)"
-            if chunk.parent_symbol:
-                label = f"{chunk.parent_symbol}.{label}"
+            label = format_symbol_label(chunk.symbol, chunk.parent_symbol)
             click.echo(f"{chunk.file_path}:{chunk.start_line}-{chunk.end_line}  {chunk.node_type:<10} {label}")
 
 
@@ -101,10 +101,28 @@ def search(query: str, repo: str | None, limit: int) -> None:
         return
 
     for id_, metadata, distance in zip(ids, result["metadatas"][0], result["distances"][0]):
-        label = metadata["symbol"] or "(file)"
-        if metadata["parent_symbol"]:
-            label = f"{metadata['parent_symbol']}.{label}"
+        label = format_symbol_label(metadata["symbol"], metadata["parent_symbol"])
         click.echo(
             f"{distance:.3f}  {metadata['repo']}/{metadata['file_path']}"
             f":{metadata['start_line']}-{metadata['end_line']}  {label}"
         )
+
+
+@main.command()
+@click.argument("question")
+@click.option("--repo", default=None, help="Only use chunks from this repo as context.")
+@click.option("--limit", default=8, show_default=True, help="Number of chunks to retrieve as context.")
+def ask(question: str, repo: str | None, limit: int) -> None:
+    """Answer a free-text question about the indexed repos, with citations.
+
+    Requires a local Ollama server running with the configured model pulled
+    (see OLLAMA_MODEL/OLLAMA_BASE_URL in .env.example).
+    """
+    config = load_config()
+    answer = answer_question(config, question, repo=repo, limit=limit)
+
+    click.echo(answer.text)
+    if answer.citations:
+        click.echo("\nSources:")
+        for c in answer.citations:
+            click.echo(f"  {c.repo}/{c.file_path}:{c.start_line}-{c.end_line}  {c.label}")

@@ -4,8 +4,9 @@ Clone a GitHub user's public repos and build a local, chunk-aware knowledge
 base to answer questions about their code.
 
 **Status:** early stage. Repos get synced, filtered, chunked, embedded, and
-stored in a local vector store, so free-text search over the chunks already
-works. An LLM-answer layer with citations is planned next.
+stored in a local vector store. Free-text search over the chunks works, and
+`repo-sage ask` layers a locally-served LLM (via Ollama) on top to synthesize
+answers with citations back to repo/file/line.
 
 ## How it works (so far)
 
@@ -33,6 +34,11 @@ works. An LLM-answer layer with citations is planned next.
    content hasn't changed since the last run are skipped, not
    re-embedded, and chunks that no longer exist (renamed/deleted functions
    or files) are pruned from the collection.
+6. Answer free-text questions: `search` finds the closest chunks by
+   embedding similarity, and `ask` goes further, retrieving the top-k
+   chunks and handing them to a local LLM (served by
+   [Ollama](https://ollama.com)) to synthesize an answer, citing the
+   repo/file/line each part of the answer came from.
 
 ## Setup
 
@@ -55,6 +61,10 @@ Edit `.env`:
   Any local sentence-transformers-compatible model name works; larger Qwen3-
   Embedding variants (4B/8B) give better retrieval quality if you have a GPU
   (or patience).
+- `OLLAMA_MODEL` / `OLLAMA_BASE_URL` - optional, used by `repo-sage ask`.
+  Default to `qwen3:8b` and `http://localhost:11434`. Requires a local
+  [Ollama](https://ollama.com) server running with that model pulled
+  (`ollama pull qwen3:8b`).
 
 Edit `repos.txt` to list the repos you want included (see comments in the
 file for the format).
@@ -80,6 +90,10 @@ uv run repo-sage embed <repo-name>
 
 # Search embedded chunks across every repo (or one, with --repo)
 uv run repo-sage search "how does X work" --limit 5
+
+# Ask a free-text question and get an LLM-synthesized answer with citations
+# (requires a local Ollama server - see OLLAMA_MODEL/OLLAMA_BASE_URL above)
+uv run repo-sage ask "how does X work" --limit 5
 ```
 
 ## Development
