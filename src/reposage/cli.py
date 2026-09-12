@@ -115,6 +115,9 @@ def search(query: str, repo: str | None, limit: int) -> None:
 def ask(question: str, repo: str | None, limit: int) -> None:
     """Answer a free-text question about the indexed repos, with citations.
 
+    If the retrieved chunks aren't enough, the model can read further into
+    a synced repo itself (read-only, a few rounds of tool calls at most).
+
     Requires a local Ollama server running with the configured model pulled
     (see OLLAMA_MODEL/OLLAMA_BASE_URL in .env.example).
     """
@@ -126,3 +129,7 @@ def ask(question: str, repo: str | None, limit: int) -> None:
         click.echo("\nSources:")
         for c in answer.citations:
             click.echo(f"  {c.repo}/{c.file_path}:{c.start_line}-{c.end_line}  {c.label}")
+    if answer.explored:
+        click.echo("\nExplored further:")
+        for call in answer.explored:
+            click.echo(f"  {call}")

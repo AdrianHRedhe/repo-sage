@@ -1,27 +1,31 @@
+from typing import Any
+
 import requests
 
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 
 class OllamaClient:
-    """Thin wrapper around a local Ollama server's generate API.
+    """Thin wrapper around a local Ollama server's chat API.
 
     Kept as the sole place that knows about Ollama's request/response shape,
     so swapping in a hosted provider later only means adding a client with
-    the same `generate` method here, not touching the answer pipeline.
+    the same `chat` method here, not touching the answer pipeline.
     """
 
     def __init__(self, model: str, base_url: str = DEFAULT_OLLAMA_BASE_URL) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
 
-    def generate(self, prompt: str) -> str:
+    def chat(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"model": self._model, "messages": messages, "stream": False}
+        if tools:
+            payload["tools"] = tools
+
         try:
-            response = requests.post(
-                f"{self._base_url}/api/generate",
-                json={"model": self._model, "prompt": prompt, "stream": False},
-                timeout=300,
-            )
+            response = requests.post(f"{self._base_url}/api/chat", json=payload, timeout=300)
             response.raise_for_status()
         except requests.ConnectionError as e:
             raise RuntimeError(
@@ -30,4 +34,4 @@ class OllamaClient:
                 f"(`ollama pull {self._model}`)?"
             ) from e
 
-        return response.json()["response"]
+        return response.json()["message"]

@@ -38,7 +38,10 @@ answers with citations back to repo/file/line.
    embedding similarity, and `ask` goes further, retrieving the top-k
    chunks and handing them to a local LLM (served by
    [Ollama](https://ollama.com)) to synthesize an answer, citing the
-   repo/file/line each part of the answer came from.
+   repo/file/line each part of the answer came from. If the retrieved
+   chunks aren't enough, the model can call read-only tools to list files
+   in, or read more of, the synced repo itself - capped at 3 rounds of
+   tool calls before it must give a final answer.
 
 ## Setup
 

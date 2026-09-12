@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from reposage.chunking.chunk import format_symbol_label
@@ -6,13 +6,19 @@ from reposage.config import Config
 from reposage.embedding.model import Embedder
 from reposage.llm.ollama_client import OllamaClient
 from reposage.store.chroma_store import ChromaStore
+from reposage.tools import TOOL_SCHEMAS, run_tool
+
+MAX_TOOL_ITERATIONS = 3
 
 SYSTEM_PREAMBLE = (
     "You are RepoSage, an assistant answering questions about a person's "
-    "codebase using only the numbered context chunks below - do not use "
-    "outside knowledge. Cite the chunk number for every claim, like [1]. "
-    "If the context doesn't contain the answer, say so plainly instead of "
-    "guessing."
+    "codebase. Use the numbered context chunks below first - do not use "
+    "outside knowledge. If they aren't enough to answer confidently, you "
+    "may call the list_files/read_file tools (read-only) to look at more "
+    "of the repo, up to a few rounds of calls before you must give a final "
+    "answer. Cite context chunks by their number, like [1]; cite anything "
+    "you read yourself as repo/file:line. If you still can't find the "
+    "answer, say so plainly instead of guessing."
 )
 
 
@@ -29,6 +35,7 @@ class Citation:
 class Answer:
     text: str
     citations: list[Citation]
+    explored: list[str] = field(default_factory=list)
 
 
 def _build_prompt(question: str, documents: list[str], metadatas: list[dict[str, Any]]) -> str:
@@ -42,10 +49,27 @@ def _build_prompt(question: str, documents: list[str], metadatas: list[dict[str,
     return f"{SYSTEM_PREAMBLE}\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:"
 
 
+def _run_tool_calls(config: Config, tool_calls: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    tool_messages = []
+    explored = []
+    for call in tool_calls:
+        fn = call["function"]
+        name, arguments = fn["name"], fn.get("arguments") or {}
+        result = run_tool(config, name, arguments)
+        tool_messages.append({"role": "tool", "content": result})
+        explored.append(f"{name}({', '.join(f'{k}={v}' for k, v in arguments.items())})")
+    return tool_messages, explored
+
+
 def answer_question(config: Config, question: str, repo: str | None = None, limit: int = 8) -> Answer:
     """Retrieve the top-k chunks for `question` and have a local LLM
     synthesize an answer grounded in them, with citations back to
-    repo/file/line for each chunk used as context."""
+    repo/file/line for each chunk used as context.
+
+    If the retrieved chunks aren't enough, the model can call read-only
+    tools (list_files/read_file) to explore the synced repo further, up to
+    MAX_TOOL_ITERATIONS rounds before it's forced to give a final answer.
+    """
     embedder = Embedder(config.embedding_model)
     store = ChromaStore(config.chroma_dir)
 
@@ -67,6 +91,19 @@ def answer_question(config: Config, question: str, repo: str | None = None, limi
     ]
 
     client = OllamaClient(model=config.ollama_model, base_url=config.ollama_base_url)
-    text = client.generate(_build_prompt(question, documents, metadatas))
+    messages: list[dict[str, Any]] = [{"role": "user", "content": _build_prompt(question, documents, metadatas)}]
+    explored: list[str] = []
 
-    return Answer(text=text, citations=citations)
+    for _ in range(MAX_TOOL_ITERATIONS):
+        message = client.chat(messages, tools=TOOL_SCHEMAS)
+        tool_calls = message.get("tool_calls")
+        if not tool_calls:
+            return Answer(text=message["content"], citations=citations, explored=explored)
+
+        messages.append(message)
+        tool_messages, newly_explored = _run_tool_calls(config, tool_calls)
+        messages.extend(tool_messages)
+        explored.extend(newly_explored)
+
+    final = client.chat(messages, tools=None)
+    return Answer(text=final["content"], citations=citations, explored=explored)
