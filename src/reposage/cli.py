@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import click
 
 from reposage.answer import answer_question
@@ -5,6 +7,7 @@ from reposage.chunking.chunk import format_symbol_label
 from reposage.chunking.chunk_file import chunk_file
 from reposage.config import load_config
 from reposage.embedding.model import Embedder
+from reposage.eval import load_golden_cases, run_eval
 from reposage.filters.include import list_included_files
 from reposage.filters.languages import language_for
 from reposage.index import index_repo
@@ -133,3 +136,34 @@ def ask(question: str, repo: str | None, limit: int) -> None:
         click.echo("\nExplored further:")
         for call in answer.explored:
             click.echo(f"  {call}")
+
+
+@main.command(name="eval")
+@click.option(
+    "--golden",
+    "golden_path",
+    default="eval/golden.json",
+    show_default=True,
+    help="Path to the golden question/answer set.",
+)
+@click.option("--limit", default=5, show_default=True, help="Number of chunks retrieved per question.")
+def eval_cmd(golden_path: str, limit: int) -> None:
+    """Measure retrieval quality against a golden question/answer set.
+
+    Retrieves the top-k chunks for each golden question and checks whether
+    the expected file/symbol shows up (and at what rank), so retrieval
+    changes can be compared before/after instead of judged by feel.
+    """
+    config = load_config()
+    cases = load_golden_cases(Path(golden_path))
+    if not cases:
+        raise click.ClickException(f"No golden cases found in {golden_path}")
+
+    summary = run_eval(config, cases, limit=limit)
+
+    for result in summary.results:
+        status = f"hit  (rank {result.rank})" if result.hit else "miss"
+        click.echo(f"[{status:<14}] {result.case.repo}: {result.case.question}")
+
+    click.echo(f"\nHit rate@{limit}: {summary.hit_rate:.0%}  ({sum(r.hit for r in summary.results)}/{len(summary.results)})")
+    click.echo(f"Mean reciprocal rank: {summary.mean_reciprocal_rank:.3f}")

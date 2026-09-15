@@ -1,0 +1,68 @@
+[
+  {
+    "repo": "csv2md",
+    "question": "How does csv2md decide where to read the CSV input from?",
+    "expected_file": "main.go",
+    "expected_symbol": "getSrc"
+  },
+  {
+    "repo": "csv2md",
+    "question": "How does csv2md decide where to write the markdown output?",
+    "expected_file": "main.go",
+    "expected_symbol": "getDest"
+  },
+  {
+    "repo": "csv2md",
+    "question": "What error is returned when no CSV input is given via flag, positional argument, or stdin?",
+    "expected_file": "main.go",
+    "expected_symbol": "getSrc"
+  },
+  {
+    "repo": "csv2md",
+    "question": "How are the column widths computed for aligning the markdown table?",
+    "expected_file": "main.go",
+    "expected_symbol": "getWidths"
+  },
+  {
+    "repo": "csv2md",
+    "question": "How is a single CSV row turned into a padded markdown table row?",
+    "expected_file": "main.go",
+    "expected_symbol": "transformRow"
+  },
+  {
+    "repo": "csv2md",
+    "question": "How is the header divider row built in the generated markdown table?",
+    "expected_file": "main.go",
+    "expected_symbol": "csvToMarkdown"
+  },
+  {
+    "repo": "csv2md",
+    "question": "What command-line flags does csv2md accept?",
+    "expected_file": "main.go",
+    "expected_symbol": "init"
+  },
+  {
+    "repo": "csv2md",
+    "question": "How does csv2md parse the CSV input using Go's encoding/csv package?",
+    "expected_file": "main.go",
+    "expected_symbol": "readInput"
+  },
+  {
+    "repo": "csv2md",
+    "question": "How is the generated markdown output written to a file or stdout?",
+    "expected_file": "main.go",
+    "expected_symbol": "writeOutput"
+  },
+  {
+    "repo": "csv2md",
+    "question": "What test cases exist for the column-width calculation?",
+    "expected_file": "main_test.go",
+    "expected_symbol": "TestGetWidths"
+  },
+  {
+    "repo": "csv2md",
+    "question": "How do I install csv2md with homebrew?",
+    "expected_file": "README.md",
+    "expected_symbol": null
+  }
+]
