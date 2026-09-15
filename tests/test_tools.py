@@ -1,20 +1,8 @@
 import subprocess
 from pathlib import Path
 
-from reposage.config import Config
+from conftest import make_config as _config
 from reposage.tools import list_files_tool, read_file_tool, run_tool
-
-
-def _config(tmp_path: Path) -> Config:
-    return Config(
-        github_user="octocat",
-        github_token="",
-        data_dir=tmp_path,
-        repos_file=tmp_path / "repos.txt",
-        embedding_model="unused",
-        ollama_model="unused",
-        ollama_base_url="http://unused",
-    )
 
 
 def _init_repo(tmp_path: Path, name: str) -> Path:

@@ -4,7 +4,8 @@ from typing import Any
 from reposage.chunking.chunk import format_symbol_label
 from reposage.config import Config
 from reposage.embedding.model import Embedder
-from reposage.llm.ollama_client import OllamaClient
+from reposage.llm.client import Message, ToolCall
+from reposage.llm.factory import build_llm_client
 from reposage.store.chroma_store import ChromaStore
 from reposage.tools import TOOL_SCHEMAS, run_tool
 
@@ -113,15 +114,13 @@ def _build_prompt(
     return f"{SYSTEM_PREAMBLE}\n\nContext:\n{context}{related_section}\n\nQuestion: {question}\n\nAnswer:"
 
 
-def _run_tool_calls(config: Config, tool_calls: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+def _run_tool_calls(config: Config, tool_calls: tuple[ToolCall, ...]) -> tuple[list[Message], list[str]]:
     tool_messages = []
     explored = []
     for call in tool_calls:
-        fn = call["function"]
-        name, arguments = fn["name"], fn.get("arguments") or {}
-        result = run_tool(config, name, arguments)
-        tool_messages.append({"role": "tool", "content": result})
-        explored.append(f"{name}({', '.join(f'{k}={v}' for k, v in arguments.items())})")
+        result = run_tool(config, call.name, call.arguments)
+        tool_messages.append(Message(role="tool", content=result, tool_call_id=call.id))
+        explored.append(f"{call.name}({', '.join(f'{k}={v}' for k, v in call.arguments.items())})")
     return tool_messages, explored
 
 
@@ -152,22 +151,20 @@ def answer_question(config: Config, question: str, repo: str | None = None, limi
     related_documents, related_metadatas = _hydrate_related_chunks(store, metadatas)
     related = [_citation_from_metadata(m) for m in related_metadatas]
 
-    client = OllamaClient(model=config.ollama_model, base_url=config.ollama_base_url)
-    messages: list[dict[str, Any]] = [
-        {"role": "user", "content": _build_prompt(question, documents, metadatas, related_documents, related_metadatas)}
-    ]
+    client = build_llm_client(config)
+    prompt = _build_prompt(question, documents, metadatas, related_documents, related_metadatas)
+    messages: list[Message] = [Message(role="user", content=prompt)]
     explored: list[str] = []
 
     for _ in range(MAX_TOOL_ITERATIONS):
         message = client.chat(messages, tools=TOOL_SCHEMAS)
-        tool_calls = message.get("tool_calls")
-        if not tool_calls:
-            return Answer(text=message["content"], citations=citations, related=related, explored=explored)
+        if not message.tool_calls:
+            return Answer(text=message.content, citations=citations, related=related, explored=explored)
 
         messages.append(message)
-        tool_messages, newly_explored = _run_tool_calls(config, tool_calls)
+        tool_messages, newly_explored = _run_tool_calls(config, message.tool_calls)
         messages.extend(tool_messages)
         explored.extend(newly_explored)
 
     final = client.chat(messages, tools=None)
-    return Answer(text=final["content"], citations=citations, related=related, explored=explored)
+    return Answer(text=final.content, citations=citations, related=related, explored=explored)

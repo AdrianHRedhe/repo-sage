@@ -6,9 +6,10 @@ base to answer questions about their code.
 **Status:** early stage. Repos get synced, filtered, chunked (with a
 heuristic caller/callee graph resolved across each repo), embedded, and
 stored in a local vector store. Free-text search over the chunks works, and
-`repo-sage ask` layers a locally-served LLM (via Ollama) on top to synthesize
-answers with citations back to repo/file/line. `repo-sage eval` measures
-retrieval quality against per-language golden question sets.
+`repo-sage ask` layers an LLM on top (local via Ollama, or hosted via the
+Anthropic API - switchable with `LLM_PROVIDER`) to synthesize answers with
+citations back to repo/file/line. `repo-sage eval` measures retrieval
+quality against per-language golden question sets.
 
 ## How it works (so far)
 
@@ -52,15 +53,19 @@ retrieval quality against per-language golden question sets.
    collection.
 7. Answer free-text questions: `search` finds the closest chunks by
    embedding similarity, and `ask` goes further, retrieving the top-k
-   chunks and handing them to a local LLM (served by
-   [Ollama](https://ollama.com)) to synthesize an answer, citing the
-   repo/file/line each part of the answer came from. The retrieved
-   chunks' immediate callers/callees are also hydrated with their real
-   bodies and added as a separate "Related code" section, so the model
-   sees actual related code even when it wasn't the closest embedding
-   match itself. If that still isn't enough, the model can call read-only
-   tools to list files in, or read more of, the synced repo itself -
-   capped at 3 rounds of tool calls before it must give a final answer.
+   chunks and handing them to an LLM to synthesize an answer, citing the
+   repo/file/line each part of the answer came from. The LLM provider is
+   swappable behind one interface (`reposage/llm/client.py`): `ollama`
+   (local, free, private, the default) or `anthropic` (hosted, needs
+   `ANTHROPIC_API_KEY`, faster/higher quality) - set with `LLM_PROVIDER`.
+   The retrieved chunks' immediate callers/callees are also hydrated with
+   their real bodies and added as a separate "Related code" section, so
+   the model sees actual related code even when it wasn't the closest
+   embedding match itself. If that still isn't enough, the model can call
+   read-only tools to list files in, or read more of, the synced repo
+   itself - capped at 3 rounds of tool calls before it must give a final
+   answer. Response length is capped (`LLM_MAX_TOKENS`) on both providers
+   as a cost/runaway-generation guard.
 8. Measure retrieval quality: `eval` runs golden question/answer sets, one
    per language (`eval/golden_go.json`, `eval/golden_python.json`, ...),
    against whatever's currently embedded and reports hit-rate@k and mean
@@ -88,10 +93,18 @@ Edit `.env`:
   Any local sentence-transformers-compatible model name works; larger Qwen3-
   Embedding variants (4B/8B) give better retrieval quality if you have a GPU
   (or patience).
-- `OLLAMA_MODEL` / `OLLAMA_BASE_URL` - optional, used by `repo-sage ask`.
+- `LLM_PROVIDER` - optional, used by `repo-sage ask`. `ollama` (default,
+  local/free/private) or `anthropic` (hosted, faster/higher quality).
+- `OLLAMA_MODEL` / `OLLAMA_BASE_URL` - used when `LLM_PROVIDER=ollama`.
   Default to `qwen3:8b` and `http://localhost:11434`. Requires a local
   [Ollama](https://ollama.com) server running with that model pulled
   (`ollama pull qwen3:8b`).
+- `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` - used when
+  `LLM_PROVIDER=anthropic`. API key is required in that case; model
+  defaults to `claude-haiku-4-5-20251001` (deliberately cheap/fast, since
+  every call is billed).
+- `LLM_MAX_TOKENS` - optional, caps response length on either provider.
+  Defaults to 1024.
 
 Edit `repos.txt` to list the repos you want included (see comments in the
 file for the format).
@@ -120,7 +133,7 @@ uv run repo-sage embed <repo-name>
 uv run repo-sage search "how does X work" --limit 5
 
 # Ask a free-text question and get an LLM-synthesized answer with citations
-# (requires a local Ollama server - see OLLAMA_MODEL/OLLAMA_BASE_URL above)
+# (local Ollama by default; set LLM_PROVIDER=anthropic to use the hosted API)
 uv run repo-sage ask "how does X work" --limit 5
 
 # Measure retrieval quality against per-language golden question sets

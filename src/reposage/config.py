@@ -4,12 +4,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 
+from reposage.llm.anthropic_client import DEFAULT_ANTHROPIC_MODEL, DEFAULT_MAX_TOKENS
 from reposage.llm.ollama_client import DEFAULT_OLLAMA_BASE_URL
 
 load_dotenv()
 
 DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 DEFAULT_OLLAMA_MODEL = "qwen3:8b"
+DEFAULT_LLM_PROVIDER = "ollama"
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,10 @@ class Config:
     embedding_model: str
     ollama_model: str
     ollama_base_url: str
+    llm_provider: str
+    anthropic_api_key: str
+    anthropic_model: str
+    max_tokens: int
 
     @property
     def repos_dir(self) -> Path:
@@ -49,6 +55,12 @@ def load_config() -> Config:
     ollama_model = os.environ.get("OLLAMA_MODEL", "").strip() or DEFAULT_OLLAMA_MODEL
     ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "").strip() or DEFAULT_OLLAMA_BASE_URL
 
+    llm_provider = os.environ.get("LLM_PROVIDER", "").strip().lower() or DEFAULT_LLM_PROVIDER
+    anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    anthropic_model = os.environ.get("ANTHROPIC_MODEL", "").strip() or DEFAULT_ANTHROPIC_MODEL
+    max_tokens_raw = os.environ.get("LLM_MAX_TOKENS", "").strip()
+    max_tokens = int(max_tokens_raw) if max_tokens_raw else DEFAULT_MAX_TOKENS
+
     return Config(
         github_user=github_user,
         github_token=github_token,
@@ -57,4 +69,8 @@ def load_config() -> Config:
         embedding_model=embedding_model,
         ollama_model=ollama_model,
         ollama_base_url=ollama_base_url,
+        llm_provider=llm_provider,
+        anthropic_api_key=anthropic_api_key,
+        anthropic_model=anthropic_model,
+        max_tokens=max_tokens,
     )
