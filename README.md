@@ -9,7 +9,10 @@ stored in a local vector store. Free-text search over the chunks works, and
 `repo-sage ask` layers an LLM on top (local via Ollama, or hosted via the
 Anthropic API - switchable with `LLM_PROVIDER`) to synthesize answers with
 citations back to repo/file/line. `repo-sage eval` measures retrieval
-quality against per-language golden question sets.
+quality against per-language golden question sets. A small FastAPI app
+(`src/reposage/web/`, see "Deploying the demo website" below) wraps the
+same Q&A in a public-facing chat page, plus a bounded "bring your own
+public repo" sandbox.
 
 ## How it works (so far)
 
@@ -147,3 +150,59 @@ uv run repo-sage eval --limit 5
 ```bash
 uv run pytest
 ```
+
+## Deploying the demo website
+
+`src/reposage/web/` is a small FastAPI app (`GET /`, `/api/repos`,
+`/api/ask`, `/api/sandbox/*`) wrapping the same `answer_question` used by
+the CLI - a single static page (`web/static/index.html`, no build step) to
+chat with the owner's own pre-embedded repos, plus a bounded "bring your
+own repo" sandbox: a visitor can point it at any *other* public GitHub
+repo, one slot per UTC day, cleaned up before the next submission (private
+repos simply fail to clone anonymously - no separate check needed).
+
+Design choices worth knowing before deploying:
+
+- **Anthropic, not Ollama, for the hosted deployment.** Running a local
+  model for public traffic on a small box isn't practical; the Docker
+  image defaults `LLM_PROVIDER=anthropic` with the cheap/fast
+  `claude-haiku-4-5-20251001`. (Ollama stays the default for local/CLI use
+  - see above.)
+- **A request budget exists because real people other than you will be
+  able to reach this.** `WEB_HOURLY_REQUEST_LIMIT` / `WEB_DAILY_REQUEST_LIMIT`
+  (defaults 10/hour, 30/day) bound worst-case spend; either can be set to
+  0 to disable that tier. Sized for "a few friends/recruiters try it," not
+  production traffic - there's no per-IP limiting or job queue, since that
+  would be disproportionate at this scale.
+- **`WEB_ACCESS_CODE` is recommended for a real deployment**, even with
+  the budget cap - a capped budget can still be exhausted by a stranger
+  before the friend/recruiter it's meant for gets to try it. It's an
+  env var, so turning the gate on/off doesn't touch code; leave it unset
+  to run fully open.
+- **The showcase repos are baked into the image at build time**, not
+  synced at container startup - `repo-sage sync` (using whatever
+  `repos.txt` says - leave it empty to use the existing "every public,
+  non-fork repo" fallback, exactly "download all my public repos") and
+  `repo-sage embed` for each run during `docker build`, so the deployed
+  container needs no GitHub access at runtime, only the Anthropic API and
+  (for the sandbox) github.com. **Check what's in `repos.txt` before
+  building** - it's whatever you've been using for local dev, which may
+  not be what you want a recruiter asking questions about.
+
+Build and run:
+
+```bash
+cp .env.example .env   # fill in GITHUB_USER, ANTHROPIC_API_KEY, WEB_ACCESS_CODE, ...
+docker compose up --build
+```
+
+`docker compose` reads `.env` for the build arg (`GITHUB_USER`) and the
+container's runtime environment. Passing `GITHUB_TOKEN` (via the
+`github_token` build secret, wired up in `docker-compose.yml`) is optional
+but recommended if `repos.txt` is empty, to avoid GitHub's 60/hr
+unauthenticated REST limit across repeated rebuilds while iterating.
+
+No persistent volumes are used - a container restart resets the sandbox
+slot and usage counters, which is an acceptable trade at this traffic
+level rather than managing volume lifecycle/invalidation against the
+baked-in image data.

@@ -16,5 +16,8 @@ def make_config(tmp_path: Path, **overrides) -> Config:
         anthropic_api_key="",
         anthropic_model="unused",
         max_tokens=1024,
+        web_access_code="",
+        web_hourly_request_limit=10,
+        web_daily_request_limit=30,
     )
     return Config(**{**base, **overrides})

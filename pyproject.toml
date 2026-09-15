@@ -18,6 +18,8 @@ dependencies = [
     "chromadb>=0.5",
     "sentence-transformers>=3.0",
     "anthropic>=1.6.0",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.4",
 ]
 
 [project.scripts]
@@ -30,3 +32,8 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/reposage"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+]

@@ -4,7 +4,7 @@ from typing import Any
 from reposage.chunking.chunk import format_symbol_label
 from reposage.config import Config
 from reposage.embedding.model import Embedder
-from reposage.llm.client import Message, ToolCall
+from reposage.llm.client import LLMClient, Message, ToolCall
 from reposage.llm.factory import build_llm_client
 from reposage.store.chroma_store import ChromaStore
 from reposage.tools import TOOL_SCHEMAS, run_tool
@@ -124,7 +124,15 @@ def _run_tool_calls(config: Config, tool_calls: tuple[ToolCall, ...]) -> tuple[l
     return tool_messages, explored
 
 
-def answer_question(config: Config, question: str, repo: str | None = None, limit: int = 8) -> Answer:
+def answer_question(
+    config: Config,
+    question: str,
+    repo: str | None = None,
+    limit: int = 8,
+    embedder: Embedder | None = None,
+    store: ChromaStore | None = None,
+    client: LLMClient | None = None,
+) -> Answer:
     """Retrieve the top-k chunks for `question` and have a local LLM
     synthesize an answer grounded in them, with citations back to
     repo/file/line for each chunk used as context.
@@ -136,9 +144,15 @@ def answer_question(config: Config, question: str, repo: str | None = None, limi
     the model can call read-only tools (list_files/read_file) to explore
     the synced repo itself, up to MAX_TOOL_ITERATIONS rounds before it's
     forced to give a final answer.
+
+    embedder/store/client default to constructing fresh instances (fine
+    for a one-shot CLI process); a caller that serves many requests from
+    one long-lived process (reposage/web/) should build these once and
+    pass them in, since constructing an Embedder reloads model weights.
     """
-    embedder = Embedder(config.embedding_model)
-    store = ChromaStore(config.chroma_dir)
+    embedder = embedder or Embedder(config.embedding_model)
+    store = store or ChromaStore(config.chroma_dir)
+    client = client or build_llm_client(config)
 
     result = store.query(embedder.embed_query(question), n_results=limit, repo=repo)
     metadatas = result["metadatas"][0]
@@ -151,7 +165,6 @@ def answer_question(config: Config, question: str, repo: str | None = None, limi
     related_documents, related_metadatas = _hydrate_related_chunks(store, metadatas)
     related = [_citation_from_metadata(m) for m in related_metadatas]
 
-    client = build_llm_client(config)
     prompt = _build_prompt(question, documents, metadatas, related_documents, related_metadatas)
     messages: list[Message] = [Message(role="user", content=prompt)]
     explored: list[str] = []

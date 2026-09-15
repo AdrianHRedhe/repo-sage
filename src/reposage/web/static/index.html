@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RepoSage</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e8eaed;
+    --muted: #9aa2af;
+    --accent: #6ea8fe;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+  .subtitle { color: var(--muted); font-size: 0.9rem; margin: 0 0 1.5rem; }
+  .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  .tab {
+    padding: 0.4rem 0.9rem; border-radius: 999px; border: 1px solid var(--border);
+    background: transparent; color: var(--muted); cursor: pointer; font-size: 0.85rem;
+  }
+  .tab.active { background: var(--accent); color: #0f1115; border-color: var(--accent); font-weight: 600; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 1.1rem; margin-bottom: 1rem;
+  }
+  label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.3rem; }
+  input[type=text], select, textarea {
+    width: 100%; padding: 0.55rem 0.7rem; border-radius: 8px; border: 1px solid var(--border);
+    background: #0f1115; color: var(--text); font-size: 0.95rem; margin-bottom: 0.8rem;
+  }
+  button {
+    background: var(--accent); color: #0f1115; border: none; border-radius: 8px;
+    padding: 0.55rem 1.1rem; font-weight: 600; cursor: pointer; font-size: 0.9rem;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .answer { white-space: pre-wrap; line-height: 1.5; margin-top: 1rem; }
+  .section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 1rem 0 0.4rem; }
+  .chunk { font-size: 0.85rem; color: var(--muted); padding: 0.15rem 0; }
+  .status { font-size: 0.85rem; color: var(--muted); margin-top: 0.5rem; }
+  .error { color: #ff6b6b; font-size: 0.85rem; margin-top: 0.5rem; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RepoSage</h1>
+  <p class="subtitle">Ask questions about a codebase - answers cite the repo/file/line they came from.</p>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="main">My repos</button>
+    <button class="tab" data-tab="sandbox">Try your own public repo</button>
+  </div>
+
+  <div id="access-panel" class="panel" hidden>
+    <label for="access-code">Access code</label>
+    <input type="text" id="access-code" placeholder="Enter access code" />
+  </div>
+
+  <div id="main-panel" class="panel">
+    <label for="repo-select">Repo</label>
+    <select id="repo-select"><option value="">All repos</option></select>
+    <label for="main-question">Question</label>
+    <textarea id="main-question" rows="2" placeholder="How does X work?"></textarea>
+    <button id="main-ask">Ask</button>
+  </div>
+
+  <div id="sandbox-panel" class="panel" hidden>
+    <label for="sandbox-status">Today's sandbox repo</label>
+    <div id="sandbox-status" class="status">Loading...</div>
+    <label for="sandbox-url">Public GitHub repo URL</label>
+    <input type="text" id="sandbox-url" placeholder="https://github.com/owner/repo" />
+    <button id="sandbox-submit" class="secondary">Load this repo (one slot/day)</button>
+    <label for="sandbox-question" style="margin-top: 0.8rem;">Question</label>
+    <textarea id="sandbox-question" rows="2" placeholder="How does X work?"></textarea>
+    <button id="sandbox-ask">Ask</button>
+  </div>
+
+  <div id="result"></div>
+</div>
+
+<script>
+const state = { activeTab: "main", accessRequired: false };
+
+function accessHeaders() {
+  const code = localStorage.getItem("repoSageAccessCode");
+  return code ? { "X-Access-Code": code } : {};
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...accessHeaders(), ...(options.headers || {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+  return data;
+}
+
+function renderResult(answer) {
+  const el = document.getElementById("result");
+  const section = (title, items, fmt) =>
+    items.length ? `<div class="section-title">${title}</div>` + items.map(fmt).join("") : "";
+
+  el.innerHTML = `
+    <div class="panel">
+      <div class="answer"></div>
+      ${section("Sources", answer.citations, c => `<div class="chunk">${c.repo}/${c.file_path}:${c.start_line}-${c.end_line} ${c.label}</div>`)}
+      ${section("Related code", answer.related, c => `<div class="chunk">${c.repo}/${c.file_path}:${c.start_line}-${c.end_line} ${c.label}</div>`)}
+      ${section("Explored further", answer.explored, e => `<div class="chunk">${e}</div>`)}
+    </div>`;
+  el.querySelector(".answer").textContent = answer.text;
+}
+
+function renderError(message) {
+  document.getElementById("result").innerHTML = `<div class="error">${message}</div>`;
+}
+
+function switchTab(tab) {
+  state.activeTab = tab;
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  document.getElementById("main-panel").hidden = tab !== "main";
+  document.getElementById("sandbox-panel").hidden = tab !== "sandbox";
+}
+document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
+
+document.getElementById("access-code").addEventListener("change", e => {
+  localStorage.setItem("repoSageAccessCode", e.target.value.trim());
+});
+
+async function loadConfig() {
+  const cfg = await api("/api/config");
+  state.accessRequired = cfg.access_code_required;
+  document.getElementById("access-panel").hidden = !cfg.access_code_required;
+  const saved = localStorage.getItem("repoSageAccessCode");
+  if (saved) document.getElementById("access-code").value = saved;
+}
+
+async function loadRepos() {
+  const { repos } = await api("/api/repos");
+  const select = document.getElementById("repo-select");
+  repos.forEach(name => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  });
+}
+
+async function refreshSandboxStatus() {
+  const el = document.getElementById("sandbox-status");
+  try {
+    const status = await api("/api/sandbox/status");
+    el.textContent = status.loaded
+      ? `${status.repo_owner}/${status.repo_name} (loaded ${status.loaded_at})`
+      : "No repo loaded yet today - be the first to submit one.";
+  } catch (e) {
+    el.textContent = "Could not load status.";
+  }
+}
+
+async function ask(question, repo, source) {
+  if (!question.trim()) return;
+  renderError("");
+  document.getElementById("result").innerHTML = `<div class="status">Thinking...</div>`;
+  try {
+    const answer = await api("/api/ask", { method: "POST", body: JSON.stringify({ question, repo, source }) });
+    renderResult(answer);
+  } catch (e) {
+    renderError(e.message);
+  }
+}
+
+document.getElementById("main-ask").addEventListener("click", () => {
+  const repo = document.getElementById("repo-select").value || null;
+  ask(document.getElementById("main-question").value, repo, "main");
+});
+
+document.getElementById("sandbox-ask").addEventListener("click", () => {
+  ask(document.getElementById("sandbox-question").value, null, "sandbox");
+});
+
+document.getElementById("sandbox-submit").addEventListener("click", async () => {
+  const url = document.getElementById("sandbox-url").value.trim();
+  if (!url) return;
+  const btn = document.getElementById("sandbox-submit");
+  btn.disabled = true;
+  document.getElementById("sandbox-status").textContent = "Cloning and embedding - this can take up to a minute...";
+  try {
+    const state = await api("/api/sandbox/submit", { method: "POST", body: JSON.stringify({ repo_url: url }) });
+    document.getElementById("sandbox-status").textContent = `${state.repo_owner}/${state.repo_name} (loaded ${state.loaded_at})`;
+  } catch (e) {
+    renderError(e.message);
+    await refreshSandboxStatus();
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+loadConfig();
+loadRepos();
+refreshSandboxStatus();
+</script>
+</body>
+</html>

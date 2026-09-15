@@ -12,6 +12,8 @@ load_dotenv()
 DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 DEFAULT_OLLAMA_MODEL = "qwen3:8b"
 DEFAULT_LLM_PROVIDER = "ollama"
+DEFAULT_WEB_HOURLY_REQUEST_LIMIT = 10
+DEFAULT_WEB_DAILY_REQUEST_LIMIT = 30
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,9 @@ class Config:
     anthropic_api_key: str
     anthropic_model: str
     max_tokens: int
+    web_access_code: str
+    web_hourly_request_limit: int
+    web_daily_request_limit: int
 
     @property
     def repos_dir(self) -> Path:
@@ -61,6 +66,15 @@ def load_config() -> Config:
     max_tokens_raw = os.environ.get("LLM_MAX_TOKENS", "").strip()
     max_tokens = int(max_tokens_raw) if max_tokens_raw else DEFAULT_MAX_TOKENS
 
+    # Web deployment only (reposage/web/) - the CLI never reads these.
+    # An empty access code means the access gate is off; either request
+    # limit can be disabled independently by setting it to 0.
+    web_access_code = os.environ.get("WEB_ACCESS_CODE", "").strip()
+    web_hourly_raw = os.environ.get("WEB_HOURLY_REQUEST_LIMIT", "").strip()
+    web_hourly_request_limit = int(web_hourly_raw) if web_hourly_raw else DEFAULT_WEB_HOURLY_REQUEST_LIMIT
+    web_daily_raw = os.environ.get("WEB_DAILY_REQUEST_LIMIT", "").strip()
+    web_daily_request_limit = int(web_daily_raw) if web_daily_raw else DEFAULT_WEB_DAILY_REQUEST_LIMIT
+
     return Config(
         github_user=github_user,
         github_token=github_token,
@@ -73,4 +87,7 @@ def load_config() -> Config:
         anthropic_api_key=anthropic_api_key,
         anthropic_model=anthropic_model,
         max_tokens=max_tokens,
+        web_access_code=web_access_code,
+        web_hourly_request_limit=web_hourly_request_limit,
+        web_daily_request_limit=web_daily_request_limit,
     )
