@@ -59,6 +59,8 @@ class ChromaStore:
                     "start_line": c.start_line,
                     "end_line": c.end_line,
                     "content_hash": c.content_hash,
+                    "calls": ",".join(c.calls),
+                    "called_by": ",".join(c.called_by),
                 }
                 for c in chunks
             ],
@@ -70,3 +72,22 @@ class ChromaStore:
             n_results=n_results,
             where={"repo": repo} if repo else None,
         )
+
+    def get_by_symbol(self, repo: str, symbol: str) -> dict[str, Any] | None:
+        """The first stored chunk defining `symbol` in `repo`, or None.
+
+        Used to hydrate a retrieved chunk's callers/callees with their
+        actual code for LLM context - lookup by name, not by embedding
+        similarity, since we already know exactly which chunk we want."""
+        result = self._collection.get(
+            where={"$and": [{"repo": repo}, {"symbol": symbol}]},
+            include=["documents", "metadatas"],
+            limit=1,
+        )
+        if not result["ids"]:
+            return None
+        return {
+            "id": result["ids"][0],
+            "document": result["documents"][0],
+            "metadata": result["metadatas"][0],
+        }

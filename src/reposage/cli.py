@@ -3,15 +3,15 @@ from pathlib import Path
 import click
 
 from reposage.answer import answer_question
+from reposage.callgraph import attach_lineage
 from reposage.chunking.chunk import format_symbol_label
-from reposage.chunking.chunk_file import chunk_file
+from reposage.chunking.repo_chunks import chunk_repo
 from reposage.config import load_config
 from reposage.embedding.model import Embedder
 from reposage.eval import EvalSummary, discover_golden_files, load_golden_cases, run_eval
 from reposage.filters.include import list_included_files
-from reposage.filters.languages import language_for
 from reposage.index import index_repo
-from reposage.store.chroma_store import ChromaStore
+from reposage.store.chroma_store import ChromaStore, chunk_id
 from reposage.sync import sync_repos
 
 
@@ -50,7 +50,8 @@ def list_files(repo_name: str) -> None:
 @main.command()
 @click.argument("repo_name")
 def chunks(repo_name: str) -> None:
-    """Print the chunks that would be produced for one repo (debug tool)."""
+    """Print the chunks that would be produced for one repo, including
+    their resolved caller/callee lineage (debug tool)."""
     config = load_config()
     repo_path = config.repos_dir / repo_name
     if not repo_path.exists():
@@ -58,14 +59,18 @@ def chunks(repo_name: str) -> None:
             f"'{repo_name}' not found under {config.repos_dir}. Run `repo-sage sync` first."
         )
 
-    for rel_path in list_included_files(repo_path):
-        language = language_for(rel_path.suffix)
-        if language is None:
-            continue
+    chunks_by_file = chunk_repo(repo_name, repo_path)
+    all_chunks = [c for file_chunks in chunks_by_file.values() for c in file_chunks]
+    enriched_by_id = attach_lineage(all_chunks)
 
-        for chunk in chunk_file(repo_name, repo_path, rel_path, language):
-            label = format_symbol_label(chunk.symbol, chunk.parent_symbol)
-            click.echo(f"{chunk.file_path}:{chunk.start_line}-{chunk.end_line}  {chunk.node_type:<10} {label}")
+    for chunk in all_chunks:
+        chunk = enriched_by_id[chunk_id(chunk)]
+        label = format_symbol_label(chunk.symbol, chunk.parent_symbol)
+        click.echo(f"{chunk.file_path}:{chunk.start_line}-{chunk.end_line}  {chunk.node_type:<10} {label}")
+        if chunk.calls:
+            click.echo(f"    calls:      {', '.join(chunk.calls)}")
+        if chunk.called_by:
+            click.echo(f"    called by:  {', '.join(chunk.called_by)}")
 
 
 @main.command()
@@ -131,6 +136,10 @@ def ask(question: str, repo: str | None, limit: int) -> None:
     if answer.citations:
         click.echo("\nSources:")
         for c in answer.citations:
+            click.echo(f"  {c.repo}/{c.file_path}:{c.start_line}-{c.end_line}  {c.label}")
+    if answer.related:
+        click.echo("\nRelated code (callers/callees):")
+        for c in answer.related:
             click.echo(f"  {c.repo}/{c.file_path}:{c.start_line}-{c.end_line}  {c.label}")
     if answer.explored:
         click.echo("\nExplored further:")

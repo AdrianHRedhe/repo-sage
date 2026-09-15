@@ -65,3 +65,21 @@ def test_query_can_be_filtered_by_repo(tmp_path: Path) -> None:
     result = store.query([1.0, 0.0], n_results=10, repo="repo")
 
     assert result["ids"][0] == [chunk_id(mine)]
+
+
+def test_get_by_symbol_finds_matching_chunk(tmp_path: Path) -> None:
+    store = ChromaStore(tmp_path / "chroma")
+    chunk = _chunk("foo", text="def foo(): pass")
+    store.upsert([chunk], [[1.0, 0.0]])
+
+    hit = store.get_by_symbol("repo", "foo")
+
+    assert hit is not None
+    assert hit["document"] == "def foo(): pass"
+    assert hit["metadata"]["symbol"] == "foo"
+
+
+def test_get_by_symbol_returns_none_when_missing(tmp_path: Path) -> None:
+    store = ChromaStore(tmp_path / "chroma")
+
+    assert store.get_by_symbol("repo", "missing") is None

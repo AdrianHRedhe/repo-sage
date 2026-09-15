@@ -3,10 +3,12 @@
 Clone a GitHub user's public repos and build a local, chunk-aware knowledge
 base to answer questions about their code.
 
-**Status:** early stage. Repos get synced, filtered, chunked, embedded, and
+**Status:** early stage. Repos get synced, filtered, chunked (with a
+heuristic caller/callee graph resolved across each repo), embedded, and
 stored in a local vector store. Free-text search over the chunks works, and
 `repo-sage ask` layers a locally-served LLM (via Ollama) on top to synthesize
-answers with citations back to repo/file/line.
+answers with citations back to repo/file/line. `repo-sage eval` measures
+retrieval quality against per-language golden question sets.
 
 ## How it works (so far)
 
@@ -28,21 +30,38 @@ answers with citations back to repo/file/line.
    and Scala. Anything else (including non-code files like `README.md`)
    falls back to fixed-size overlapping line windows, so every included file
    always produces at least one chunk.
-5. Embed each chunk with a local model (Qwen3-Embedding by default - fully
+5. Resolve a heuristic call graph across the whole repo (not just one
+   file at a time, since a caller and callee are frequently in different
+   files): for Python and Go, another tree-sitter query
+   (`chunking/queries/{go,python}_calls.scm`) finds every call site in a
+   chunk, and matches the called name against every other chunk's symbol
+   in the repo. This is name-only matching, not real type/scope
+   resolution - `obj.Close()` matches every `Close` defined anywhere in
+   the repo - so it's a heuristic for surfacing likely-related code, not
+   an exact call graph. (Scala isn't covered yet.)
+6. Embed each chunk with a local model (Qwen3-Embedding by default - fully
    local, no third-party API) and store it in a local Chroma collection
-   shared across every repo. Re-running `embed` is cheap: chunks whose
-   content hasn't changed since the last run are skipped, not
-   re-embedded, and chunks that no longer exist (renamed/deleted functions
-   or files) are pruned from the collection.
-6. Answer free-text questions: `search` finds the closest chunks by
+   shared across every repo. What actually gets embedded is the chunk's
+   text plus a short `Calls: ...` / `Called by: ...` line naming its
+   resolved lineage - full caller/callee bodies aren't blended in, since
+   that would dilute the embedding and hurt precision for the chunk
+   itself; just the names give a little extra relational signal. Re-running
+   `embed` is cheap: chunks whose content *and* lineage haven't changed
+   since the last run are skipped, not re-embedded, and chunks that no
+   longer exist (renamed/deleted functions or files) are pruned from the
+   collection.
+7. Answer free-text questions: `search` finds the closest chunks by
    embedding similarity, and `ask` goes further, retrieving the top-k
    chunks and handing them to a local LLM (served by
    [Ollama](https://ollama.com)) to synthesize an answer, citing the
-   repo/file/line each part of the answer came from. If the retrieved
-   chunks aren't enough, the model can call read-only tools to list files
-   in, or read more of, the synced repo itself - capped at 3 rounds of
-   tool calls before it must give a final answer.
-7. Measure retrieval quality: `eval` runs golden question/answer sets, one
+   repo/file/line each part of the answer came from. The retrieved
+   chunks' immediate callers/callees are also hydrated with their real
+   bodies and added as a separate "Related code" section, so the model
+   sees actual related code even when it wasn't the closest embedding
+   match itself. If that still isn't enough, the model can call read-only
+   tools to list files in, or read more of, the synced repo itself -
+   capped at 3 rounds of tool calls before it must give a final answer.
+8. Measure retrieval quality: `eval` runs golden question/answer sets, one
    per language (`eval/golden_go.json`, `eval/golden_python.json`, ...),
    against whatever's currently embedded and reports hit-rate@k and mean
    reciprocal rank per language plus overall, so changes to chunking or
@@ -90,7 +109,8 @@ uv run repo-sage sync
 # See the filtered file list for one repo (sanity check before chunking)
 uv run repo-sage list-files <repo-name>
 
-# See the chunks that would be produced for one repo
+# See the chunks that would be produced for one repo, with resolved
+# caller/callee lineage
 uv run repo-sage chunks <repo-name>
 
 # Chunk, embed, and store one repo's files locally

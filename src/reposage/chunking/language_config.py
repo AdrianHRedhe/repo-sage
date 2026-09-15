@@ -18,6 +18,11 @@ class LanguageConfig:
     # to the parent instead (e.g. Python's decorated_definition, so
     # @decorators aren't dropped from the chunk).
     wrapper_node_types: frozenset[str] = frozenset()
+    # Query that captures @call_name at every call site in a chunk's text,
+    # used to build a heuristic caller/callee graph (reposage/callgraph.py).
+    # None means "not supported yet" (e.g. Scala's call-site AST shape
+    # hasn't been validated against a real repo, unlike Go/Python).
+    call_query_path: Path | None = None
 
 
 # Keyed by the language names from filters/languages.py - only languages
@@ -29,10 +34,12 @@ LANGUAGE_CONFIGS: dict[str, LanguageConfig] = {
         query_path=QUERIES_DIR / "python.scm",
         container_node_types=frozenset({"class_definition"}),
         wrapper_node_types=frozenset({"decorated_definition"}),
+        call_query_path=QUERIES_DIR / "python_calls.scm",
     ),
     "Go": LanguageConfig(
         ts_language="go",
         query_path=QUERIES_DIR / "go.scm",
+        call_query_path=QUERIES_DIR / "go_calls.scm",
     ),
     "Scala": LanguageConfig(
         ts_language="scala",
