@@ -47,6 +47,12 @@ class EvalSummary:
         return sum(1 / r.rank if r.rank else 0.0 for r in self.results) / len(self.results)
 
 
+def discover_golden_files(directory: Path) -> list[Path]:
+    """Every golden_<label>.json file in a directory (e.g. golden_go.json,
+    golden_python.json), sorted for stable output order."""
+    return sorted(directory.glob("golden_*.json"))
+
+
 def load_golden_cases(path: Path) -> list[GoldenCase]:
     raw = json.loads(path.read_text())
     return [

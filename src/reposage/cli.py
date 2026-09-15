@@ -7,7 +7,7 @@ from reposage.chunking.chunk import format_symbol_label
 from reposage.chunking.chunk_file import chunk_file
 from reposage.config import load_config
 from reposage.embedding.model import Embedder
-from reposage.eval import load_golden_cases, run_eval
+from reposage.eval import EvalSummary, discover_golden_files, load_golden_cases, run_eval
 from reposage.filters.include import list_included_files
 from reposage.filters.languages import language_for
 from reposage.index import index_repo
@@ -138,32 +138,51 @@ def ask(question: str, repo: str | None, limit: int) -> None:
             click.echo(f"  {call}")
 
 
+def _echo_summary(label: str, summary: EvalSummary, limit: int) -> None:
+    hits = sum(r.hit for r in summary.results)
+    click.echo(f"Hit rate@{limit}: {summary.hit_rate:.0%}  ({hits}/{len(summary.results)})")
+    click.echo(f"Mean reciprocal rank: {summary.mean_reciprocal_rank:.3f}")
+
+
 @main.command(name="eval")
 @click.option(
     "--golden",
     "golden_path",
-    default="eval/golden.json",
+    default="eval",
     show_default=True,
-    help="Path to the golden question/answer set.",
+    help="Path to a golden_*.json file, or a directory of them (one per language).",
 )
 @click.option("--limit", default=5, show_default=True, help="Number of chunks retrieved per question.")
 def eval_cmd(golden_path: str, limit: int) -> None:
-    """Measure retrieval quality against a golden question/answer set.
+    """Measure retrieval quality against golden question/answer sets.
 
     Retrieves the top-k chunks for each golden question and checks whether
     the expected file/symbol shows up (and at what rank), so retrieval
     changes can be compared before/after instead of judged by feel.
     """
     config = load_config()
-    cases = load_golden_cases(Path(golden_path))
-    if not cases:
-        raise click.ClickException(f"No golden cases found in {golden_path}")
+    path = Path(golden_path)
+    golden_files = discover_golden_files(path) if path.is_dir() else [path]
+    if not golden_files:
+        raise click.ClickException(f"No golden_*.json files found in {path}")
 
-    summary = run_eval(config, cases, limit=limit)
+    all_results = []
+    for golden_file in golden_files:
+        label = golden_file.stem.removeprefix("golden_")
+        cases = load_golden_cases(golden_file)
+        if not cases:
+            continue
 
-    for result in summary.results:
-        status = f"hit  (rank {result.rank})" if result.hit else "miss"
-        click.echo(f"[{status:<14}] {result.case.repo}: {result.case.question}")
+        summary = run_eval(config, cases, limit=limit)
+        all_results.extend(summary.results)
 
-    click.echo(f"\nHit rate@{limit}: {summary.hit_rate:.0%}  ({sum(r.hit for r in summary.results)}/{len(summary.results)})")
-    click.echo(f"Mean reciprocal rank: {summary.mean_reciprocal_rank:.3f}")
+        click.echo(f"== {label} ({golden_file.name}) ==")
+        for result in summary.results:
+            status = f"hit  (rank {result.rank})" if result.hit else "miss"
+            click.echo(f"[{status:<14}] {result.case.repo}: {result.case.question}")
+        _echo_summary(label, summary, limit)
+        click.echo()
+
+    if len(golden_files) > 1:
+        click.echo("== overall ==")
+        _echo_summary("overall", EvalSummary(results=all_results), limit)

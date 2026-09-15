@@ -1,7 +1,15 @@
 import json
 from pathlib import Path
 
-from reposage.eval import CaseResult, EvalSummary, GoldenCase, _matches, _rank_of_first_match, load_golden_cases
+from reposage.eval import (
+    CaseResult,
+    EvalSummary,
+    GoldenCase,
+    _matches,
+    _rank_of_first_match,
+    discover_golden_files,
+    load_golden_cases,
+)
 
 
 def _metadata(**overrides) -> dict:
@@ -75,3 +83,13 @@ def test_summary_with_no_results_is_zero() -> None:
 
     assert summary.hit_rate == 0.0
     assert summary.mean_reciprocal_rank == 0.0
+
+
+def test_discover_golden_files_finds_only_golden_prefixed_json(tmp_path: Path) -> None:
+    (tmp_path / "golden_go.json").write_text("[]")
+    (tmp_path / "golden_python.json").write_text("[]")
+    (tmp_path / "other.json").write_text("[]")
+
+    files = discover_golden_files(tmp_path)
+
+    assert [f.name for f in files] == ["golden_go.json", "golden_python.json"]

@@ -1,0 +1,68 @@
+[
+  {
+    "repo": "gwr_claims_bot",
+    "question": "How does the bot log into the GWR delay repay website?",
+    "expected_file": "gwr/claim.py",
+    "expected_symbol": "login"
+  },
+  {
+    "repo": "gwr_claims_bot",
+    "question": "How does the bot determine which tab of the claim form it's currently on?",
+    "expected_file": "gwr/claim.py",
+    "expected_symbol": "current_tab"
+  },
+  {
+    "repo": "gwr_claims_bot",
+    "question": "How does the bot fill in the departure time, rounded to the nearest 15 minutes?",
+    "expected_file": "gwr/claim.py",
+    "expected_symbol": "search_for_departure"
+  },
+  {
+    "repo": "gwr_claims_bot",
+    "question": "What happens if submitting the claim raises an exception partway through?",
+    "expected_file": "gwr/claim.py",
+    "expected_symbol": "claim"
+  },
+  {
+    "repo": "gwr_claims_bot",
+    "question": "How is a ticket photo encrypted and saved to disk?",
+    "expected_file": "gwr/encryption.py",
+    "expected_symbol": "save_encrypted_image"
+  },
+  {
+    "repo": "gwr_claims_bot",
+    "question": "How is an encrypted ticket photo decrypted before it's uploaded?",
+    "expected_file": "gwr/encryption.py",
+    "expected_symbol": "load_encrypted_image"
+  },
+  {
+    "repo": "gwr_claims_bot",
+    "question": "Where does the Fernet encryption key come from?",
+    "expected_file": "gwr/encryption.py",
+    "expected_symbol": "get_cipher"
+  },
+  {
+    "repo": "gwr_claims_bot",
+    "question": "How is the mime type of an uploaded image determined from its raw bytes?",
+    "expected_file": "gwr/image_format_utils.py",
+    "expected_symbol": "get_mime_type_from_bytes"
+  },
+  {
+    "repo": "gwr_claims_bot",
+    "question": "How is a realistic-looking camera-style filename generated for the uploaded photo?",
+    "expected_file": "gwr/image_format_utils.py",
+    "expected_symbol": "generate_photo_file_name"
+  },
+  {
+    "repo": "gwr_claims_bot",
+    "question": "How does the bot solve the reCAPTCHA challenge on the claim form?",
+    "expected_file": "gwr/captcha.py",
+    "expected_symbol": "solve_page_recaptcha"
+  },
+  {
+    "repo": "gwr_claims_bot",
+    "question": "How is the reCAPTCHA site key extracted from the page?",
+    "expected_file": "gwr/captcha.py",
+    "expected_symbol": "get_site_key_from_page"
+  }
+]

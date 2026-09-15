@@ -42,9 +42,10 @@ answers with citations back to repo/file/line.
    chunks aren't enough, the model can call read-only tools to list files
    in, or read more of, the synced repo itself - capped at 3 rounds of
    tool calls before it must give a final answer.
-7. Measure retrieval quality: `eval` runs a small golden question/answer
-   set (`eval/golden.json`) against whatever's currently embedded and
-   reports hit-rate@k and mean reciprocal rank, so changes to chunking or
+7. Measure retrieval quality: `eval` runs golden question/answer sets, one
+   per language (`eval/golden_go.json`, `eval/golden_python.json`, ...),
+   against whatever's currently embedded and reports hit-rate@k and mean
+   reciprocal rank per language plus overall, so changes to chunking or
    retrieval can be compared against a number instead of judged by feel.
 
 ## Setup
@@ -102,8 +103,9 @@ uv run repo-sage search "how does X work" --limit 5
 # (requires a local Ollama server - see OLLAMA_MODEL/OLLAMA_BASE_URL above)
 uv run repo-sage ask "how does X work" --limit 5
 
-# Measure retrieval quality against a golden question/answer set
-# (eval/golden.json), so retrieval changes can be compared before/after
+# Measure retrieval quality against per-language golden question sets
+# (eval/golden_go.json, eval/golden_python.json, ...), so retrieval
+# changes can be compared before/after instead of judged by feel
 uv run repo-sage eval --limit 5
 ```
 
