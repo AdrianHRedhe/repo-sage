@@ -1,0 +1,17 @@
+# Critical: never let a local .env (secrets) or local dev data (which may
+# include repos/config not meant for the public showcase image, and any
+# already-embedded local sandbox state) leak into the build context.
+.env
+.env.*
+!.env.example
+data/
+
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.git/
+.gitignore
+ROADMAP.md

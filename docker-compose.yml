@@ -1,0 +1,34 @@
+services:
+  reposage-web:
+    build:
+      context: .
+      args:
+        GITHUB_USER: ${GITHUB_USER}
+      secrets:
+        - github_token
+    ports:
+      - "8000:8000"
+    environment:
+      # Still required at runtime even though sync doesn't re-run - load_config()
+      # always needs it.
+      GITHUB_USER: ${GITHUB_USER}
+      LLM_PROVIDER: anthropic
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1024}
+      # Recommended set for a public deployment - an open, uncapped
+      # instance can have its budget exhausted by a stranger before the
+      # friend/recruiter it's actually meant for gets to try it.
+      WEB_ACCESS_CODE: ${WEB_ACCESS_CODE}
+      WEB_HOURLY_REQUEST_LIMIT: ${WEB_HOURLY_REQUEST_LIMIT:-10}
+      WEB_DAILY_REQUEST_LIMIT: ${WEB_DAILY_REQUEST_LIMIT:-30}
+      # No volumes: at this traffic level, a container restart resetting
+      # the sandbox slot/budget counters (both cheap to rebuild) is a
+      # reasonable trade for not managing persistent volumes. The baked-in
+      # showcase repos live in the image itself, not a volume, so a
+      # rebuild always reflects the latest repos.txt/sync without needing
+      # to separately manage volume invalidation.
+
+secrets:
+  github_token:
+    environment: GITHUB_TOKEN
