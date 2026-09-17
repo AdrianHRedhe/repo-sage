@@ -12,11 +12,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 
 RUN pip install --no-cache-dir uv
 
+# Run as a dedicated non-root user - this container processes third-party
+# content (visitor-submitted repos via the sandbox), so it shouldn't run
+# as root even though nothing in the app deliberately executes cloned
+# repo content (tree-sitter only parses text; nothing shells out to or
+# imports/evals anything from a cloned repo).
+RUN groupadd --gid 1000 reposage && useradd --uid 1000 --gid reposage --create-home reposage
+
 WORKDIR /app
-COPY pyproject.toml uv.lock ./
+RUN chown reposage:reposage /app
+USER reposage
+
+COPY --chown=reposage:reposage pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY . .
+COPY --chown=reposage:reposage . .
 RUN uv sync --frozen --no-dev
 
 # Bake the owner's own repos in at build time. Pass GITHUB_TOKEN as a
@@ -24,8 +34,17 @@ RUN uv sync --frozen --no-dev
 # on rebuilds - only needed if repos.txt is empty (sync-everything mode).
 # Deliberately curate repos.txt for the deployed build (rather than
 # leaving it empty) if only some public repos should be showcased.
+# mode=0444: the secret mount defaults to root-only (0400), unreadable by
+# the non-root user this step now runs as.
+#
+# The embed step downloads the sentence-transformers model (Qwen3-Embedding-0.6B,
+# 1GB+) from Hugging Face on first use. Without a cache mount, every rebuild
+# re-downloads it from scratch even though it never changes - on a slow
+# connection this turned a routine rebuild into an hours-long one. uid/gid
+# 1000 match the reposage user created above so it can write into the cache.
 ARG GITHUB_USER
-RUN --mount=type=secret,id=github_token \
+RUN --mount=type=secret,id=github_token,mode=0444 \
+    --mount=type=cache,target=/home/reposage/.cache/huggingface,uid=1000,gid=1000 \
     GITHUB_USER=${GITHUB_USER} \
     GITHUB_TOKEN=$(cat /run/secrets/github_token 2>/dev/null || echo "") \
     uv run repo-sage sync && \

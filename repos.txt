@@ -7,3 +7,4 @@
 # and doesn't pull down your whole account.
 
 csv2md
+gwr_claims_bot

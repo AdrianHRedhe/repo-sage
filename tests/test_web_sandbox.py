@@ -35,6 +35,9 @@ def test_parse_github_repo_url_accepts_valid_shapes(url: str, expected: tuple[st
         "https://github.com/octocat",
         "not a url",
         "https://github.com/../../etc",
+        "https://github.com/octocat/..",
+        "https://github.com/../octocat",
+        "https://github.com/./hello-world",
     ],
 )
 def test_parse_github_repo_url_rejects_everything_else(url: str) -> None:
@@ -119,3 +122,19 @@ def test_retry_after_a_same_day_failure_gets_a_fresh_slot(tmp_path: Path, monkey
 
     assert state.repo_name == "small-repo"
     assert sandbox_config_for(config, state.slot_id).repos_dir.parent.exists()
+
+
+def test_submit_rejects_a_repo_name_that_escapes_the_sandbox_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defense-in-depth: even if parse_github_repo_url's regex ever let a
+    dangerous name (e.g. "..") through, submit_sandbox_repo independently
+    verifies the resulting clone path stays inside repos_dir before
+    touching the filesystem - the same belt-and-suspenders pattern
+    reposage/tools.py uses for read_file/list_files."""
+    config = make_config(tmp_path)
+    monkeypatch.setattr(sandbox_module, "parse_github_repo_url", lambda url: ("octocat", ".."))
+    monkeypatch.setattr(sandbox_module, "clone_or_update", lambda *a, **k: pytest.fail("should never clone"))
+
+    with pytest.raises(SandboxError, match="Invalid repo name"):
+        submit_sandbox_repo(config, "https://github.com/octocat/whatever")

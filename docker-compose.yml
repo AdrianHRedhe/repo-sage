@@ -1,5 +1,15 @@
 services:
   reposage-web:
+    # Deliberately amd64, not arm64, despite this typically running on an
+    # Apple Silicon Mac Mini: the arm64 CPU-only torch wheel has no
+    # optimized GEMM kernels for this embedding model on this platform and
+    # falls back to a slow generic BLAS path - measured ~31x slower than
+    # amd64 (438s vs 14s to embed the same 13 chunks). amd64 under Docker
+    # Desktop's Rosetta emulation matches native speed despite the
+    # emulation layer, because it gets Intel MKL instead. This affects not
+    # just build time but every live query, since answering a question
+    # embeds it too.
+    platform: linux/x86_64
     build:
       context: .
       args:
@@ -28,6 +38,22 @@ services:
       # showcase repos live in the image itself, not a volume, so a
       # rebuild always reflects the latest repos.txt/sync without needing
       # to separately manage volume invalidation.
+    # Hardening for a container that processes third-party content (the
+    # sandbox clones visitor-submitted public repos): no Linux capabilities
+    # beyond the default-safe set, no privilege escalation, and hard
+    # resource caps so a pathological sandbox submission (e.g. something
+    # that blows up during tree-sitter parsing) can't take down the host.
+    # Not using `read_only: true` here - chromadb's SQLite backend
+    # typically needs directory-level write access (WAL/lock files) even
+    # for pure reads against the main store, so a read-only root risks
+    # silently breaking the core Q&A feature; flagging that rather than
+    # guessing it's safe.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    pids_limit: 256
 
 secrets:
   github_token:

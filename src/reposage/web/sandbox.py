@@ -39,13 +39,26 @@ def parse_github_repo_url(url: str) -> tuple[str, str]:
     """Accepts only `https://github.com/<owner>/<name>` (optional
     trailing `.git`/`/`) - no SSH URLs, no other hosts. This is
     deliberately the same shape `clone_url_for` builds, so a submission
-    can only ever target GitHub's own public clone endpoint."""
+    can only ever target GitHub's own public clone endpoint.
+
+    `name` later becomes a path segment (sandbox_config.repos_dir / name)
+    - reject "." and ".." explicitly, since [\\w.-]+ otherwise accepts them
+    and neither is a real GitHub repo name anyway. submit_sandbox_repo
+    also re-checks the resulting path stays inside repos_dir as a second,
+    independent layer (the same belt-and-suspenders pattern reposage/tools.py
+    uses for read_file/list_files), rather than relying on this regex alone.
+    """
     match = _GITHUB_REPO_URL.match(url.strip())
     if not match:
         raise SandboxError(
             "Please provide a public GitHub repo URL like https://github.com/<owner>/<repo>."
         )
-    return match.group("owner"), match.group("name")
+    owner, name = match.group("owner"), match.group("name")
+    if owner in (".", "..") or name in (".", ".."):
+        raise SandboxError(
+            "Please provide a public GitHub repo URL like https://github.com/<owner>/<repo>."
+        )
+    return owner, name
 
 
 def _sandbox_root(config: Config) -> Path:
@@ -138,7 +151,10 @@ def submit_sandbox_repo(config: Config, repo_url: str) -> SandboxState:
     slot_id = _new_slot_id(today)
     sandbox_config = sandbox_config_for(config, slot_id)
     sandbox_config.repos_dir.mkdir(parents=True, exist_ok=True)
-    repo_path = sandbox_config.repos_dir / name
+    repos_dir = sandbox_config.repos_dir.resolve()
+    repo_path = (repos_dir / name).resolve()
+    if not repo_path.is_relative_to(repos_dir):
+        raise SandboxError("Invalid repo name.")
 
     try:
         clone_or_update(
