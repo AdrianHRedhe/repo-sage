@@ -108,6 +108,29 @@ async function api(path, options = {}) {
   return data;
 }
 
+function escapeHtml(s) {
+  const chars = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  return s.replace(/[&<>"']/g, ch => chars[ch]);
+}
+
+function chunkHtml(c, index) {
+  const prefix = index != null ? `[${index}] ` : "";
+  const label = escapeHtml(`${c.repo}/${c.file_path}:${c.start_line}-${c.end_line} ${c.label}`);
+  const body = c.url ? `<a href="${c.url}" target="_blank" rel="noopener noreferrer">${label}</a>` : label;
+  return `<div class="chunk">${prefix}${body}</div>`;
+}
+
+// The model cites context chunks inline as "[1]", "[2]", ... (1-indexed
+// into answer.citations, see answer.py's _context_block/SYSTEM_PREAMBLE).
+// Turn those into links to the matching source when one is resolvable.
+function linkifyAnswer(text, citations) {
+  return escapeHtml(text).replace(/\[(\d+)\]/g, (match, numStr) => {
+    const citation = citations[Number(numStr) - 1];
+    if (!citation || !citation.url) return match;
+    return `<a href="${citation.url}" target="_blank" rel="noopener noreferrer">${match}</a>`;
+  });
+}
+
 function renderResult(answer) {
   const el = document.getElementById("result");
   const section = (title, items, fmt) =>
@@ -115,12 +138,11 @@ function renderResult(answer) {
 
   el.innerHTML = `
     <div class="panel">
-      <div class="answer"></div>
-      ${section("Sources", answer.citations, c => `<div class="chunk">${c.repo}/${c.file_path}:${c.start_line}-${c.end_line} ${c.label}</div>`)}
-      ${section("Related code", answer.related, c => `<div class="chunk">${c.repo}/${c.file_path}:${c.start_line}-${c.end_line} ${c.label}</div>`)}
-      ${section("Explored further", answer.explored, e => `<div class="chunk">${e}</div>`)}
+      <div class="answer">${linkifyAnswer(answer.text, answer.citations)}</div>
+      ${section("Sources", answer.citations, (c, i) => chunkHtml(c, i + 1))}
+      ${section("Related code", answer.related, c => chunkHtml(c))}
+      ${section("Explored further", answer.explored, e => `<div class="chunk">${escapeHtml(e)}</div>`)}
     </div>`;
-  el.querySelector(".answer").textContent = answer.text;
 }
 
 function renderError(message) {

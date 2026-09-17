@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from reposage.answer import Answer, answer_question
+from reposage.answer import Answer, Citation, answer_question
 from reposage.config import Config, load_config
 from reposage.embedding.model import Embedder
 from reposage.llm.client import LLMClient
@@ -15,6 +15,7 @@ from reposage.llm.factory import build_llm_client
 from reposage.store.chroma_store import ChromaStore
 from reposage.web.auth import check_access_code
 from reposage.web.budget import BudgetGuard
+from reposage.web.links import github_blob_url
 from reposage.web.sandbox import SandboxError, read_sandbox_state, sandbox_config_for, submit_sandbox_repo
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -96,11 +97,18 @@ def api_sandbox_status(config: Config = Depends(get_config)) -> dict:
     return {"loaded": True, **asdict(state)}
 
 
-def _answer_to_dict(answer: Answer) -> dict:
+def _citation_dict(citation: Citation, repos_dir: Path, owner: str) -> dict:
+    url = github_blob_url(
+        repos_dir, owner, citation.repo, citation.file_path, citation.start_line, citation.end_line
+    )
+    return {**asdict(citation), "url": url}
+
+
+def _answer_to_dict(answer: Answer, repos_dir: Path, owner: str) -> dict:
     return {
         "text": answer.text,
-        "citations": [asdict(c) for c in answer.citations],
-        "related": [asdict(c) for c in answer.related],
+        "citations": [_citation_dict(c, repos_dir, owner) for c in answer.citations],
+        "related": [_citation_dict(c, repos_dir, owner) for c in answer.related],
         "explored": answer.explored,
     }
 
@@ -142,10 +150,12 @@ def api_ask(
 
         sandbox_config = sandbox_config_for(config, state.slot_id)
         answer = answer_question(sandbox_config, payload.question, repo=state.repo_name, limit=8, client=client)
+        result = _answer_to_dict(answer, sandbox_config.repos_dir, state.repo_owner)
     else:
         answer = answer_question(
             config, payload.question, repo=payload.repo, limit=8, embedder=embedder, store=store, client=client
         )
+        result = _answer_to_dict(answer, config.repos_dir, config.github_user)
 
     budget.record()
-    return _answer_to_dict(answer)
+    return result

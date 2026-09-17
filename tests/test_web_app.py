@@ -71,7 +71,7 @@ def test_api_ask_returns_answer_shape(client, monkeypatch: pytest.MonkeyPatch) -
     body = response.json()
     assert body["text"] == "the answer"
     assert body["citations"] == [
-        {"repo": "csv2md", "file_path": "main.go", "start_line": 1, "end_line": 2, "label": "main"}
+        {"repo": "csv2md", "file_path": "main.go", "start_line": 1, "end_line": 2, "label": "main", "url": None}
     ]
     assert body["related"] == []
     assert body["explored"] == []
