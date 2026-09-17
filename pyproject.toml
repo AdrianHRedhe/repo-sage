@@ -17,6 +17,7 @@ dependencies = [
     "tree-sitter-language-pack>=0.2",
     "chromadb>=0.5",
     "sentence-transformers>=3.0",
+    "torch>=2.0",
     "anthropic>=1.6.0",
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.52.4",
@@ -37,3 +38,18 @@ packages = ["src/reposage"]
 dev = [
     "httpx>=0.28.1",
 ]
+
+# This project only ever runs embeddings on CPU (reposage/embedding/model.py
+# never selects a device, and no deployment target - dev laptop, the Docker
+# image, a Mac Mini - has an NVIDIA GPU). torch's default Linux wheel bundles
+# CUDA regardless, pulling in several GB of nvidia-* packages that are never
+# used - found via a Docker build that took 3+ hours and then failed on a
+# network timeout mid-download of one of them. macOS wheels are already
+# CPU/MPS-only (no CUDA split exists for macOS), so only override for Linux.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
