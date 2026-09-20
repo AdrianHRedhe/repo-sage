@@ -63,6 +63,9 @@ def test_index_serves_static_page(client) -> None:
 
     assert response.status_code == 200
     assert "RepoSage" in response.text
+    # The page carries the entire client inline, so a cached copy is a
+    # cached app - a deploy would not reach anyone still holding one.
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_api_config_reports_access_gate_state(client) -> None:

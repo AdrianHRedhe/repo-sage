@@ -89,7 +89,15 @@ class SandboxSubmitRequest(BaseModel):
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    # no-store, not just no-cache: index.html *is* the whole client (markup,
+    # styles and script are inline), and it is served with no ETag, only a
+    # Last-Modified. Browsers are free to reuse a response like that without
+    # asking, using a heuristic freshness window derived from its age - so
+    # after a deploy visitors kept getting the previous build and it looked
+    # like the new feature had never shipped. The document is ~30KB and
+    # every real page view already costs an LLM call, so never reusing it
+    # is cheap insurance against serving a stale app.
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/config")
