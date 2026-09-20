@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from functools import lru_cache
 from pathlib import Path
@@ -19,6 +21,19 @@ from reposage.web.links import github_blob_url
 from reposage.web.sandbox import SandboxError, read_sandbox_state, sandbox_config_for, submit_sandbox_repo
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Block startup until the embedding model is loaded. Importing torch and
+    # materialising the model takes ~10s even on native arm64, so warming here
+    # means the server only reports "ready" once queries can actually be
+    # served, instead of appearing up but 524-timing-out on the first
+    # /api/ask. The container HEALTHCHECK is what makes that visible to
+    # Docker - see the Dockerfile.
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, get_embedder)
+    yield
 
 
 @lru_cache
@@ -58,7 +73,7 @@ def require_access_code(
     check_access_code(config, x_access_code)
 
 
-app = FastAPI(title="RepoSage")
+app = FastAPI(title="RepoSage", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -118,12 +133,16 @@ def api_sandbox_submit(
     payload: SandboxSubmitRequest,
     config: Config = Depends(get_config),
     budget: BudgetGuard = Depends(get_budget_guard),
+    embedder: Embedder = Depends(get_embedder),
 ) -> dict:
     if not budget.allow():
         raise HTTPException(status_code=429, detail="Usage limit reached - try again later.")
 
     try:
-        state = submit_sandbox_repo(config, payload.repo_url)
+        # Hand over the already-warm embedder rather than letting index_repo
+        # build a second one - two copies of the model don't fit in the
+        # container's memory limit, and loading one costs ~10s per request.
+        state = submit_sandbox_repo(config, payload.repo_url, embedder=embedder)
     except SandboxError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
@@ -149,7 +168,17 @@ def api_ask(
             raise HTTPException(status_code=400, detail="No sandbox repo is loaded today.")
 
         sandbox_config = sandbox_config_for(config, state.slot_id)
-        answer = answer_question(sandbox_config, payload.question, repo=state.repo_name, limit=8, client=client)
+        # Same warm embedder as the main path - it only holds model weights
+        # and knows nothing about which repo it is embedding, so sharing it
+        # is safe. The *store* is the part that has to stay sandbox-scoped.
+        answer = answer_question(
+            sandbox_config,
+            payload.question,
+            repo=state.repo_name,
+            limit=8,
+            embedder=embedder,
+            client=client,
+        )
         result = _answer_to_dict(answer, sandbox_config.repos_dir, state.repo_owner)
     else:
         answer = answer_question(

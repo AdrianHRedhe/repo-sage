@@ -14,7 +14,7 @@ class IndexStats:
     deleted: int = 0
 
 
-def index_repo(config: Config, repo_name: str) -> IndexStats:
+def index_repo(config: Config, repo_name: str, embedder: Embedder | None = None) -> IndexStats:
     """Chunk every included file in a synced repo and bring the Chroma
     collection in sync with it: unchanged chunks are skipped (no
     re-embedding), new/changed chunks are embedded and upserted, and chunks
@@ -25,10 +25,18 @@ def index_repo(config: Config, repo_name: str) -> IndexStats:
     files - each chunk's content_hash then reflects its lineage too, so a
     newly added/removed caller or callee invalidates the cached embedding
     even when the chunk's own text didn't change.
+
+    `embedder` lets a caller that already holds a loaded model hand it over
+    instead of paying for a second one. That matters for the web sandbox:
+    the server keeps a warm Embedder for answering questions, and building
+    another one here put two full copies of the model in a memory-capped
+    container (measured 6.8GB of an 8GB limit, and OOM-killed outright on a
+    larger repo). The CLI passes nothing and gets the old behaviour.
     """
     repo_path = config.repos_dir / repo_name
     store = ChromaStore(config.chroma_dir)
-    embedder = Embedder(config.embedding_model)
+    if embedder is None:
+        embedder = Embedder(config.embedding_model)
 
     chunks_by_file = chunk_repo(repo_name, repo_path)
     all_chunks = [c for chunks in chunks_by_file.values() for c in chunks]
