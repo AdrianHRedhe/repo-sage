@@ -30,7 +30,7 @@ def attach_lineage(chunks: list[Chunk]) -> dict[str, Chunk]:
     name-only: it doesn't do type or scope resolution, so it can produce
     false-positive edges when two unrelated definitions share a name (e.g.
     two types both defining `Close`). Accepted as a known limitation - see
-    ROADMAP.md.
+    step 4 of "How it works" in README.md.
     """
     symbol_index = _build_symbol_index(chunks)
     calls_by_id: dict[str, set[str]] = {chunk_id(c): set() for c in chunks}

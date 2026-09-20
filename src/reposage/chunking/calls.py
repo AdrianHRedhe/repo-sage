@@ -26,10 +26,12 @@ def _get_call_query(config: LanguageConfig) -> Query:
 
 
 def extract_call_names(text: str, config: LanguageConfig) -> set[str]:
-    """Every identifier called within `text` (free-function calls like
-    `foo()` and method/attribute calls like `obj.foo()`), used to build a
-    heuristic caller/callee graph by matching these names against symbols
-    defined elsewhere in the repo.
+    """Every identifier called within `text` - free-function calls like
+    `foo()`, method/attribute calls like `obj.foo()`, and whatever further
+    shapes the language's own `queries/*_calls.scm` captures (Scala counts
+    `new Foo(...)` as a call, for one) - used to build a heuristic
+    caller/callee graph by matching these names against symbols defined
+    elsewhere in the repo.
 
     This is name-only matching, not real call resolution: `obj.Close()`
     matches every `Close` defined anywhere in the repo regardless of
