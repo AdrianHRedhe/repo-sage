@@ -15,6 +15,14 @@ jobs:
         with:
           enable-cache: true
 
+      # tests/test_web_highlight.py drives the page's own highlighter
+      # through node and skips itself when node is absent, so pin node
+      # here rather than relying on whatever the runner image preinstalls -
+      # otherwise that test could vanish from CI without anything failing.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       # --extra dev is required, not decorative: pytest lives in
       # [project.optional-dependencies].dev while httpx lives in
       # [dependency-groups].dev, and uv sync installs only the latter by

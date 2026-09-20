@@ -22,7 +22,8 @@ SYSTEM_PREAMBLE = (
     "you may call the list_files/read_file tools (read-only) to look at "
     "more of the repo, up to a few rounds of calls before you must give a "
     "final answer. Cite context chunks by their number, like [1]; cite "
-    "anything you read yourself as repo/file:line. If you still can't "
+    "anything you read yourself as repo/file:line. Label every code "
+    "fence you write with its language, like ```python. If you still can't "
     "find the answer, say so plainly instead of guessing."
 )
 
