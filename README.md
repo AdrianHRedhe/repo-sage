@@ -179,30 +179,63 @@ Design choices worth knowing before deploying:
   before the friend/recruiter it's meant for gets to try it. It's an
   env var, so turning the gate on/off doesn't touch code; leave it unset
   to run fully open.
-- **The showcase repos are baked into the image at build time**, not
-  synced at container startup - `repo-sage sync` (using whatever
+- **The showcase repos live in a named volume, seeded once**, not baked
+  into the image - `make seed` runs `repo-sage sync` (using whatever
   `repos.txt` says - leave it empty to use the existing "every public,
   non-fork repo" fallback, exactly "download all my public repos") and
-  `repo-sage embed` for each run during `docker build`, so the deployed
-  container needs no GitHub access at runtime, only the Anthropic API and
-  (for the sandbox) github.com. **Check what's in `repos.txt` before
-  building** - it's whatever you've been using for local dev, which may
-  not be what you want a recruiter asking questions about.
+  `repo-sage embed --all` inside the container, writing into the
+  `reposage-data` volume. Rebuilds then take about a minute instead of
+  re-embedding everything. **Check what's in `repos.txt` before seeding** -
+  it's whatever you've been using for local dev, which may not be what you
+  want a recruiter asking questions about.
+- **The embedding model is baked into the image**, though. It's ~1.2GB and
+  never changes, so it belongs in a layer, and the obvious alternative is a
+  trap: a named volume mounted where the image has no directory is created
+  root-owned, and this container runs as uid 1000, so `huggingface_hub`
+  cannot write even the lock files a cache *hit* needs.
 
 Build and run:
 
 ```bash
 cp .env.example .env   # fill in GITHUB_USER, ANTHROPIC_API_KEY, WEB_ACCESS_CODE, ...
-docker compose up --build
+make up                # build, start, wait until the model is loaded
+make seed              # once, and again whenever repos.txt changes
 ```
 
-`docker compose` reads `.env` for the build arg (`GITHUB_USER`) and the
-container's runtime environment. Passing `GITHUB_TOKEN` (via the
-`github_token` build secret, wired up in `docker-compose.yml`) is optional
-but recommended if `repos.txt` is empty, to avoid GitHub's 60/hr
-unauthenticated REST limit across repeated rebuilds while iterating.
+`make up` blocks on the container healthcheck, so when it returns the
+embedding model is loaded and `/api/ask` will answer rather than hang. It
+then asserts the built image's architecture matches the platform it asked
+for - see the next point for why that check earns its keep.
 
-No persistent volumes are used - a container restart resets the sandbox
-slot and usage counters, which is an acceptable trade at this traffic
-level rather than managing volume lifecycle/invalidation against the
-baked-in image data.
+### Build the image natively, and check that you did
+
+Use `make`, not bare `docker compose`. If `DOCKER_DEFAULT_PLATFORM` is set
+in your shell (this repo's author has `linux/x86_64` exported globally from
+their dotfiles), Docker honours it over the daemon default, and a plain
+`docker compose up` on an Apple Silicon Mac builds and runs the whole app
+amd64-under-Rosetta. **Nothing errors.** Embedding just gets slow enough to
+be indistinguishable from a hang - a seed run that should take a minute sat
+at 99% CPU for two and a half days - which is why this went undiagnosed for
+so long. `make` sets the platform variables to agree; if they ever disagree
+again, `docker compose` now fails fast instead of quietly doing the wrong
+thing. On an amd64 host, use `make PLATFORM=linux/amd64 up`.
+
+Native arm64 numbers on the author's machine, for comparison: the
+dependency layer builds from scratch in ~66s, 89 real chunks embed in ~49s,
+and a single query embeds in 0.26s.
+
+### Memory
+
+`mem_limit` is 8g, sized from measurement rather than taste: loading the
+fp32 embedding model peaks at ~4.0GB RSS, and a worst-case encode - a full
+batch of maximum-length chunks, which a hostile sandbox submission can
+force - peaks at ~5.9GB. `src/reposage/embedding/model.py` caps batch size
+and sequence length to keep that ceiling where it is; without those caps,
+`sentence-transformers`' defaults (batch 32, a 32k context) get the
+container OOM-killed mid-request. `memswap_limit` equals `mem_limit` on
+purpose: with Docker's default 2x swap allowance an overrun *thrashes
+forever* instead of dying, which looks exactly like a hang.
+
+The `reposage-data` volume persists repos and embeddings across rebuilds;
+the sandbox slot and usage counters live in it too, so a restart no longer
+resets them.

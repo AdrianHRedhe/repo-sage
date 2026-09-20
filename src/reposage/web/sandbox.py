@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from reposage.config import Config
+from reposage.embedding.model import Embedder
 from reposage.filters.include import list_included_files
 from reposage.index import index_repo
 from reposage.sync import clone_or_update, clone_url_for
@@ -122,7 +123,9 @@ def cleanup_sandbox(config: Config) -> None:
     _state_path(config).unlink(missing_ok=True)
 
 
-def submit_sandbox_repo(config: Config, repo_url: str) -> SandboxState:
+def submit_sandbox_repo(
+    config: Config, repo_url: str, embedder: Embedder | None = None
+) -> SandboxState:
     """Clone, chunk, and embed a visitor-submitted public repo into a
     dedicated sandbox store, separate from the owner's own showcase data -
     one slot per UTC day, cleaned up before the next submission.
@@ -168,7 +171,7 @@ def submit_sandbox_repo(config: Config, repo_url: str) -> SandboxState:
                 f"{MAX_SANDBOX_FILES} - too large to embed on demand here."
             )
 
-        index_repo(sandbox_config, name)
+        index_repo(sandbox_config, name, embedder=embedder)
     except Exception:
         _remove_slot(config, slot_id)
         raise

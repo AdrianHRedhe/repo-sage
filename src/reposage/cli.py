@@ -1,17 +1,6 @@
-from pathlib import Path
-
 import click
 
-from reposage.answer import answer_question
-from reposage.callgraph import attach_lineage
-from reposage.chunking.chunk import format_symbol_label
-from reposage.chunking.repo_chunks import chunk_repo
 from reposage.config import load_config
-from reposage.embedding.model import Embedder
-from reposage.eval import EvalSummary, discover_golden_files, load_golden_cases, run_eval
-from reposage.filters.include import list_included_files
-from reposage.index import index_repo
-from reposage.store.chroma_store import ChromaStore, chunk_id
 from reposage.sync import sync_repos
 
 
@@ -36,6 +25,8 @@ def sync() -> None:
 @click.argument("repo_name")
 def list_files(repo_name: str) -> None:
     """Print the filtered file list that would be chunked for one repo."""
+    from reposage.filters.include import list_included_files
+
     config = load_config()
     repo_path = config.repos_dir / repo_name
     if not repo_path.exists():
@@ -52,6 +43,11 @@ def list_files(repo_name: str) -> None:
 def chunks(repo_name: str) -> None:
     """Print the chunks that would be produced for one repo, including
     their resolved caller/callee lineage (debug tool)."""
+    from reposage.callgraph import attach_lineage
+    from reposage.chunking.chunk import format_symbol_label
+    from reposage.chunking.repo_chunks import chunk_repo
+    from reposage.store.chroma_store import chunk_id
+
     config = load_config()
     repo_path = config.repos_dir / repo_name
     if not repo_path.exists():
@@ -74,21 +70,46 @@ def chunks(repo_name: str) -> None:
 
 
 @main.command()
-@click.argument("repo_name")
-def embed(repo_name: str) -> None:
-    """Chunk, embed, and store one synced repo's files in the local Chroma collection."""
-    config = load_config()
-    repo_path = config.repos_dir / repo_name
-    if not repo_path.exists():
-        raise click.ClickException(
-            f"'{repo_name}' not found under {config.repos_dir}. Run `repo-sage sync` first."
-        )
+@click.argument("repo_name", required=False)
+@click.option("--all", "all_repos", is_flag=True, help="Embed every synced repo instead of one.")
+def embed(repo_name: str | None, all_repos: bool) -> None:
+    """Chunk, embed, and store synced repos' files in the local Chroma collection.
 
-    stats = index_repo(config, repo_name)
-    click.echo(
-        f"Embedded {stats.embedded}, skipped {stats.skipped} unchanged, "
-        f"deleted {stats.deleted} stale chunk(s) into {config.chroma_dir}"
-    )
+    `--all` exists so seeding a fresh deployment is one command rather than a
+    shell loop over `data/repos/*/` - that glob silently expands to itself when
+    the directory is empty, which made a mis-seeded container run
+    `embed "*"` instead of failing.
+    """
+    from reposage.index import index_repo
+
+    config = load_config()
+
+    if all_repos == bool(repo_name):
+        raise click.UsageError("Pass either a repo name or --all, not both.")
+
+    if all_repos:
+        repo_names = sorted(
+            path.name
+            for path in (config.repos_dir.iterdir() if config.repos_dir.exists() else [])
+            if path.is_dir()
+        )
+        if not repo_names:
+            raise click.ClickException(
+                f"No synced repos under {config.repos_dir}. Run `repo-sage sync` first."
+            )
+    else:
+        if not (config.repos_dir / repo_name).exists():
+            raise click.ClickException(
+                f"'{repo_name}' not found under {config.repos_dir}. Run `repo-sage sync` first."
+            )
+        repo_names = [repo_name]
+
+    for name in repo_names:
+        stats = index_repo(config, name)
+        click.echo(
+            f"{name}: embedded {stats.embedded}, skipped {stats.skipped} unchanged, "
+            f"deleted {stats.deleted} stale chunk(s) into {config.chroma_dir}"
+        )
 
 
 @main.command()
@@ -97,6 +118,10 @@ def embed(repo_name: str) -> None:
 @click.option("--limit", default=10, show_default=True, help="Number of results to show.")
 def search(query: str, repo: str | None, limit: int) -> None:
     """Search embedded chunks for the closest matches to a free-text query."""
+    from reposage.chunking.chunk import format_symbol_label
+    from reposage.embedding.model import Embedder
+    from reposage.store.chroma_store import ChromaStore
+
     config = load_config()
     embedder = Embedder(config.embedding_model)
     store = ChromaStore(config.chroma_dir)
@@ -129,6 +154,8 @@ def ask(question: str, repo: str | None, limit: int) -> None:
     Requires a local Ollama server running with the configured model pulled
     (see OLLAMA_MODEL/OLLAMA_BASE_URL in .env.example).
     """
+    from reposage.answer import answer_question
+
     config = load_config()
     answer = answer_question(config, question, repo=repo, limit=limit)
 
@@ -147,7 +174,7 @@ def ask(question: str, repo: str | None, limit: int) -> None:
             click.echo(f"  {call}")
 
 
-def _echo_summary(label: str, summary: EvalSummary, limit: int) -> None:
+def _echo_summary(label: str, summary: "EvalSummary", limit: int) -> None:
     hits = sum(r.hit for r in summary.results)
     click.echo(f"Hit rate@{limit}: {summary.hit_rate:.0%}  ({hits}/{len(summary.results)})")
     click.echo(f"Mean reciprocal rank: {summary.mean_reciprocal_rank:.3f}")
@@ -169,6 +196,10 @@ def eval_cmd(golden_path: str, limit: int) -> None:
     the expected file/symbol shows up (and at what rank), so retrieval
     changes can be compared before/after instead of judged by feel.
     """
+    from pathlib import Path
+
+    from reposage.eval import EvalSummary, discover_golden_files, load_golden_cases, run_eval
+
     config = load_config()
     path = Path(golden_path)
     golden_files = discover_golden_files(path) if path.is_dir() else [path]

@@ -6,6 +6,11 @@
 !.env.example
 data/
 
+# Live Cloudflare tunnel credentials. Gitignored, so `COPY . .` would
+# otherwise bake them into an image layer without them ever showing up in
+# `git status` - the reason this was easy to miss.
+cloudflared/
+
 .venv/
 venv/
 __pycache__/
