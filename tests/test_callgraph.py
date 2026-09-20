@@ -1,5 +1,10 @@
+from dataclasses import replace
+
+import pytest
+
 from reposage.callgraph import MAX_LINEAGE_NAMES, attach_lineage
 from reposage.chunking.chunk import Chunk
+from reposage.chunking.language_config import LANGUAGE_CONFIGS
 from reposage.store.chroma_store import chunk_id
 
 
@@ -11,6 +16,19 @@ def _go_chunk(symbol: str, text: str, file_path: str = "main.go", start_line: in
         node_type="function",
         start_line=start_line,
         end_line=start_line + text.count("\n"),
+        text=text,
+        symbol=symbol,
+    )
+
+
+def _scala_chunk(symbol: str, text: str, file_path: str = "Main.scala") -> Chunk:
+    return Chunk(
+        repo="repo",
+        file_path=file_path,
+        language="Scala",
+        node_type="function",
+        start_line=1,
+        end_line=1 + text.count("\n"),
         text=text,
         symbol=symbol,
     )
@@ -38,21 +56,29 @@ def test_attach_lineage_excludes_self_recursion() -> None:
     assert enriched[chunk_id(recursive)].called_by == ()
 
 
-def test_attach_lineage_leaves_chunks_without_a_call_query_untouched() -> None:
-    scala_chunk = Chunk(
-        repo="repo",
-        file_path="Main.scala",
-        language="Scala",
-        node_type="function",
-        start_line=1,
-        end_line=1,
-        text="def foo() = bar()",
-        symbol="foo",
+def test_attach_lineage_leaves_chunks_without_a_call_query_untouched(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A language whose config has no call query is skipped entirely, even
+    when the call it makes would otherwise resolve to a chunk in the set."""
+    caller = _scala_chunk("foo", "def foo() = bar()")
+    callee = _scala_chunk("bar", "def bar() = 1", file_path="Util.scala")
+    monkeypatch.setitem(
+        LANGUAGE_CONFIGS, "Scala", replace(LANGUAGE_CONFIGS["Scala"], call_query_path=None)
     )
 
-    enriched = attach_lineage([scala_chunk])
+    enriched = attach_lineage([caller, callee])
 
-    assert enriched[chunk_id(scala_chunk)].calls == ()
+    assert enriched[chunk_id(caller)].calls == ()
+    assert enriched[chunk_id(callee)].called_by == ()
+
+
+def test_attach_lineage_resolves_scala_calls() -> None:
+    caller = _scala_chunk("foo", "def foo() = bar()")
+    callee = _scala_chunk("bar", "def bar() = 1", file_path="Util.scala")
+
+    enriched = attach_lineage([caller, callee])
+
+    assert enriched[chunk_id(caller)].calls == ("bar",)
+    assert enriched[chunk_id(callee)].called_by == ("foo",)
 
 
 def test_attach_lineage_caps_lineage_size() -> None:
