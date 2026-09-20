@@ -21,6 +21,11 @@ def sync() -> None:
     if result.removed:
         click.echo(f"Removed {len(result.removed)} unlisted repo(s): {', '.join(result.removed)}")
     click.echo(f"Synced {len(result.synced)} repo(s) into {config.repos_dir}")
+    if result.failed:
+        raise click.ClickException(
+            f"Could not sync {len(result.failed)} repo(s): {', '.join(sorted(result.failed))}. "
+            "Check they exist and are public, or drop them from repos.txt."
+        )
 
 
 @main.command(name="list-files")
