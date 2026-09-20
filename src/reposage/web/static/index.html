@@ -421,5 +421,28 @@ loadConfig();
 loadRepos();
 refreshSandboxStatus();
 </script>
+<script>
+// adrianhredhe.com embeds this page in an iframe (see its
+// /services/repo_sage page) sized to exactly this content's height, so
+// there's never a scrollbar nested inside the outer page's own scrollbar.
+// That only works if we keep telling it our real height as the
+// conversation grows - a fixed guess can't track an unbounded chat log.
+(function () {
+  const PARENT_ORIGIN = "https://adrianhredhe.com";
+
+  function postHeight() {
+    window.parent.postMessage(
+      { type: "repo-sage:height", height: document.documentElement.scrollHeight },
+      PARENT_ORIGIN,
+    );
+  }
+
+  if (window.self !== window.top) {
+    new ResizeObserver(postHeight).observe(document.body);
+    window.addEventListener("load", postHeight);
+    postHeight();
+  }
+})();
+</script>
 </body>
 </html>
