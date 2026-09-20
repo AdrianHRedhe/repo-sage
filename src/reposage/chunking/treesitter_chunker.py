@@ -1,20 +1,22 @@
+from pathlib import Path
+
 from tree_sitter import Node, Query, QueryCursor
 from tree_sitter_language_pack import get_language, get_parser
 
 from reposage.chunking.chunk import Chunk
 from reposage.chunking.language_config import LANGUAGE_CONFIGS, LanguageConfig
 
-_query_cache: dict[str, Query] = {}
+_query_cache: dict[Path, Query] = {}
 
 
 def _get_query(config: LanguageConfig) -> Query:
-    cached = _query_cache.get(config.ts_language)
+    cached = _query_cache.get(config.query_path)
     if cached is not None:
         return cached
 
     language = get_language(config.ts_language)
     query = Query(language, config.query_path.read_text())
-    _query_cache[config.ts_language] = query
+    _query_cache[config.query_path] = query
     return query
 
 

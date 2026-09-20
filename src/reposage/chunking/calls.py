@@ -1,19 +1,23 @@
+from pathlib import Path
+
 from tree_sitter import Query, QueryCursor
 from tree_sitter_language_pack import get_language, get_parser
 
 from reposage.chunking.language_config import LanguageConfig
 
-_call_query_cache: dict[str, Query] = {}
+# Keyed by query file, not by language: two configs can share a
+# ts_language while pointing at different queries.
+_call_query_cache: dict[Path, Query] = {}
 
 
 def _get_call_query(config: LanguageConfig) -> Query:
-    cached = _call_query_cache.get(config.ts_language)
+    cached = _call_query_cache.get(config.call_query_path)
     if cached is not None:
         return cached
 
     language = get_language(config.ts_language)
     query = Query(language, config.call_query_path.read_text())
-    _call_query_cache[config.ts_language] = query
+    _call_query_cache[config.call_query_path] = query
     return query
 
 
