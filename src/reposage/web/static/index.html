@@ -279,9 +279,13 @@ function renderAnswerMarkdown(text, allCitations) {
   html = html.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (match, label, url) => {
     return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   });
-  html = html.replace(/\[(\d+)\]/g, (match, numStr) => {
-    const n = Number(numStr);
-    return allCitations[n - 1] ? citationLinkHtml(n, match) : match;
+  html = html.replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (match, nums) => {
+    const linked = nums.split(",").map(numStr => {
+      numStr = numStr.trim();
+      const n = Number(numStr);
+      return allCitations[n - 1] ? citationLinkHtml(n, numStr) : numStr;
+    });
+    return `[${linked.join(", ")}]`;
   });
   html = html.replace(/`([^`\n]+)`/g, (match, code) => `<code>${code}</code>`);
   html = html.replace(/\*\*([^*\n]+)\*\*/g, (match, bold) => `<strong>${bold}</strong>`);
