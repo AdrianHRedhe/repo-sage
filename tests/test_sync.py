@@ -1,8 +1,17 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+from conftest import make_config
+
+import reposage.sync as sync_module
 from reposage.filters.languages import EXTENSION_LANGUAGE
-from reposage.sync import SPARSE_CHECKOUT_PATTERNS, clone_or_update
+from reposage.sync import (
+    SPARSE_CHECKOUT_PATTERNS,
+    clone_or_update,
+    prune_removed_repos,
+    sync_repos,
+)
 
 
 def _url(origin: Path) -> str:
@@ -111,3 +120,55 @@ def test_legacy_full_clone_is_replaced_with_a_sparse_one(tmp_path: Path) -> None
     # so an existing full clone has to be thrown away to benefit at all.
     assert not (dest / "photo.jpg").exists()
     assert (dest / "keep.py").exists()
+
+
+def test_prune_removes_only_unlisted_repos(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    config.repos_dir.mkdir(parents=True)
+    for name in ("keep-me", "drop-me", "also-drop"):
+        (config.repos_dir / name).mkdir()
+
+    removed = prune_removed_repos(config, ["keep-me"])
+
+    assert removed == ["also-drop", "drop-me"]
+    assert (config.repos_dir / "keep-me").exists()
+    assert not (config.repos_dir / "drop-me").exists()
+
+
+def test_prune_is_safe_when_nothing_has_been_synced(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+
+    assert prune_removed_repos(config, ["anything"]) == []
+
+
+def test_sync_never_prunes_when_no_repos_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty resolved list means repos.txt is empty and GitHub returned
+    nothing. Treating that as "delete every clone" would turn a bad API
+    response into data loss."""
+    config = make_config(tmp_path)
+    config.repos_dir.mkdir(parents=True)
+    (config.repos_dir / "previously-synced").mkdir()
+    monkeypatch.setattr(sync_module, "list_all_nonfork_repo_names", lambda *a, **k: [])
+
+    result = sync_repos(config)
+
+    assert result.removed == []
+    assert (config.repos_dir / "previously-synced").exists()
+
+
+def test_sync_prunes_clones_dropped_from_the_repo_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = make_config(tmp_path)
+    config.repos_file.write_text("still-listed\n")
+    config.repos_dir.mkdir(parents=True)
+    (config.repos_dir / "no-longer-listed").mkdir()
+    monkeypatch.setattr(sync_module, "clone_or_update", lambda *a, **k: None)
+
+    result = sync_repos(config)
+
+    assert result.synced == ["still-listed"]
+    assert result.removed == ["no-longer-listed"]
+    assert not (config.repos_dir / "no-longer-listed").exists()

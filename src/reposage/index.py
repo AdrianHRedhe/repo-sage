@@ -14,6 +14,25 @@ class IndexStats:
     deleted: int = 0
 
 
+def prune_missing_repos(config: Config, present_names: list[str]) -> dict[str, int]:
+    """Drop stored chunks for repos that are no longer synced, returning
+    {repo: chunks deleted}.
+
+    The counterpart to sync's prune_removed_repos: that one reclaims the
+    clone, this one reclaims the embeddings, which otherwise keep being
+    retrieved and cited long after the code is gone. Only safe to call with
+    the *complete* set of synced repos, which is why `embed --all` is the
+    only caller - embedding a single repo says nothing about the rest.
+    """
+    store = ChromaStore(config.chroma_dir)
+
+    deleted = {}
+    for repo in sorted(store.repos() - set(present_names)):
+        deleted[repo] = store.delete_repo(repo)
+
+    return deleted
+
+
 def index_repo(config: Config, repo_name: str, embedder: Embedder | None = None) -> IndexStats:
     """Chunk every included file in a synced repo and bring the Chroma
     collection in sync with it: unchanged chunks are skipped (no

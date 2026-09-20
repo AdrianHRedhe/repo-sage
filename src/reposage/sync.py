@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from reposage.config import Config
@@ -25,6 +26,12 @@ SPARSE_CHECKOUT_PATTERNS: list[str] = [
     ".gitignore",
     *(f"*{extension}" for extension in sorted(EXTENSION_LANGUAGE)),
 ]
+
+
+@dataclass(frozen=True)
+class SyncResult:
+    synced: list[str]
+    removed: list[str]
 
 
 def clone_url_for(user: str, name: str) -> str:
@@ -109,7 +116,32 @@ def resolve_repo_names(config: Config) -> tuple[list[str], bool]:
     return list_all_nonfork_repo_names(config.github_user, config.github_token), True
 
 
-def sync_repos(config: Config) -> list[str]:
+def prune_removed_repos(config: Config, keep_names: list[str]) -> list[str]:
+    """Delete clones under repos_dir that `keep_names` no longer lists.
+
+    Without this a repo dropped from repos.txt stays cloned forever, and
+    because `embed --all` walks repos_dir rather than repos.txt it also
+    stays embedded and keeps turning up in answers. Left alone long enough
+    the leftovers dominate: this data volume was still carrying four repos
+    from a much earlier run against an empty repos.txt.
+
+    Returns the names removed. Callers must not pass an empty keep list -
+    see the guard in sync_repos.
+    """
+    if not config.repos_dir.exists():
+        return []
+
+    keep = set(keep_names)
+    removed = []
+    for path in sorted(config.repos_dir.iterdir()):
+        if path.is_dir() and path.name not in keep:
+            shutil.rmtree(path)
+            removed.append(path.name)
+
+    return removed
+
+
+def sync_repos(config: Config) -> SyncResult:
     names, used_everything_fallback = resolve_repo_names(config)
 
     if used_everything_fallback:
@@ -122,6 +154,17 @@ def sync_repos(config: Config) -> list[str]:
 
     config.repos_dir.mkdir(parents=True, exist_ok=True)
 
+    # Pruned before cloning, not after, so the disk the leftovers were
+    # holding is available to the clones that replace them.
+    #
+    # Guarded on a non-empty list on purpose. An empty `names` here means
+    # either repos.txt is empty *and* GitHub reported no public repos, or
+    # something upstream returned nothing unexpectedly - and "delete every
+    # clone" is not a recovery to perform automatically on that evidence.
+    removed = prune_removed_repos(config, names) if names else []
+    for name in removed:
+        print(f"Removing {name} (no longer listed)...")
+
     for name in names:
         clone_or_update(
             name,
@@ -130,4 +173,4 @@ def sync_repos(config: Config) -> list[str]:
             sparse_patterns=SPARSE_CHECKOUT_PATTERNS,
         )
 
-    return names
+    return SyncResult(synced=names, removed=removed)
