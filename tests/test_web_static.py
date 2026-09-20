@@ -1,23 +1,31 @@
 from pathlib import Path
 
+import pytest
+
 STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "reposage" / "web" / "static"
 
+STATIC_FILES = sorted(p for p in STATIC_DIR.rglob("*") if p.is_file())
 
-def test_index_html_contains_no_nul_bytes() -> None:
-    """The page is served as text and has to stay greppable.
 
-    renderAnswerMarkdown wraps extracted code blocks in a NUL sentinel,
-    which is the right choice (NUL cannot occur in the model's answer, so
-    it can't collide with real content) - but written as a literal byte it
-    made `file` report the whole page as `data` and made grep silently
-    match nothing in it. Writing it as the escape `\\u0000` keeps the
-    runtime value identical while leaving the source plain text; this
-    guards against someone pasting the literal byte back in.
+def _ids(paths: list[Path]) -> list[str]:
+    return [str(p.relative_to(STATIC_DIR)) for p in paths]
+
+
+def test_static_dir_is_not_empty() -> None:
+    """Guards the sweeps below: an empty glob would pass them vacuously."""
+    assert STATIC_FILES
+
+
+@pytest.mark.parametrize("path", STATIC_FILES, ids=_ids(STATIC_FILES))
+def test_static_file_contains_no_nul_bytes(path: Path) -> None:
+    """These files are served as text and have to stay greppable.
+
+    Guards the escaped-NUL sentinel in index.html's renderAnswerMarkdown -
+    see the comment there for why it must stay escaped.
     """
-    raw = (STATIC_DIR / "index.html").read_bytes()
-
-    assert b"\x00" not in raw
+    assert b"\x00" not in path.read_bytes()
 
 
-def test_index_html_decodes_as_utf8() -> None:
-    (STATIC_DIR / "index.html").read_bytes().decode("utf-8")
+@pytest.mark.parametrize("path", STATIC_FILES, ids=_ids(STATIC_FILES))
+def test_static_file_decodes_as_utf8(path: Path) -> None:
+    path.read_bytes().decode("utf-8")
