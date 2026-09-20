@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The lockfile pins a CPU-only torch (see [tool.uv.sources] in
+      # pyproject.toml). Without that, this step pulls several GB of unused
+      # nvidia-* wheels and routinely times out.
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      # No network and no model download: every test that touches embedding
+      # or an LLM injects a fake, so the suite runs in about a second.
+      - name: Run tests
+        run: uv run pytest -q
