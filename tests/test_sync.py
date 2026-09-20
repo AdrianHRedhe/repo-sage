@@ -172,3 +172,40 @@ def test_sync_prunes_clones_dropped_from_the_repo_list(
     assert result.synced == ["still-listed"]
     assert result.removed == ["no-longer-listed"]
     assert not (config.repos_dir / "no-longer-listed").exists()
+
+
+def test_one_unavailable_repo_does_not_abort_the_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = make_config(tmp_path)
+    config.repos_file.write_text("good-one\nmissing\ngood-two\n")
+
+    def fake_clone(name: str, *args, **kwargs) -> None:
+        if name == "missing":
+            raise subprocess.CalledProcessError(128, ["git", "clone"])
+
+    monkeypatch.setattr(sync_module, "clone_or_update", fake_clone)
+
+    result = sync_repos(config)
+
+    assert result.synced == ["good-one", "good-two"]
+    assert list(result.failed) == ["missing"]
+
+
+def test_a_failed_clone_is_not_treated_as_a_synced_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failure has to stay visible in the result - reporting it as
+    synced would let a typo in repos.txt look like a repo with no code."""
+    config = make_config(tmp_path)
+    config.repos_file.write_text("missing\n")
+    monkeypatch.setattr(
+        sync_module,
+        "clone_or_update",
+        lambda *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(["git"], 60)),
+    )
+
+    result = sync_repos(config)
+
+    assert result.synced == []
+    assert list(result.failed) == ["missing"]

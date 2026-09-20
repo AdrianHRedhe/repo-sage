@@ -32,6 +32,7 @@ SPARSE_CHECKOUT_PATTERNS: list[str] = [
 class SyncResult:
     synced: list[str]
     removed: list[str]
+    failed: dict[str, str]
 
 
 def clone_url_for(user: str, name: str) -> str:
@@ -165,12 +166,25 @@ def sync_repos(config: Config) -> SyncResult:
     for name in removed:
         print(f"Removing {name} (no longer listed)...")
 
+    synced: list[str] = []
+    failed: dict[str, str] = {}
     for name in names:
-        clone_or_update(
-            name,
-            clone_url_for(config.github_user, name),
-            config.repos_dir / name,
-            sparse_patterns=SPARSE_CHECKOUT_PATTERNS,
-        )
+        try:
+            clone_or_update(
+                name,
+                clone_url_for(config.github_user, name),
+                config.repos_dir / name,
+                sparse_patterns=SPARSE_CHECKOUT_PATTERNS,
+            )
+            synced.append(name)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            # A repo that is renamed, deleted, private, or simply not public
+            # yet shouldn't stop the other dozen from updating - one bad
+            # entry used to abort the whole run, and `make seed` with it.
+            # Not swallowed either: the caller reports these and exits
+            # non-zero, so a typo in repos.txt still reads as a failure
+            # rather than as a repo that happens to contain no code.
+            print(f"Failed to sync {name}: {error}")
+            failed[name] = type(error).__name__
 
-    return SyncResult(synced=names, removed=removed)
+    return SyncResult(synced=synced, removed=removed, failed=failed)
