@@ -1,26 +1,28 @@
 services:
   reposage-web:
-    # Deliberately amd64, not arm64, despite this typically running on an
-    # Apple Silicon Mac Mini: the arm64 CPU-only torch wheel has no
-    # optimized GEMM kernels for this embedding model on this platform and
-    # falls back to a slow generic BLAS path - measured ~31x slower than
-    # amd64 (438s vs 14s to embed the same 13 chunks). amd64 under Docker
-    # Desktop's Rosetta emulation matches native speed despite the
-    # emulation layer, because it gets Intel MKL instead. This affects not
-    # just build time but every live query, since answering a question
-    # embeds it too.
-    platform: linux/x86_64
+    # Pinned, and deliberately NOT defaulted from DOCKER_DEFAULT_PLATFORM:
+    # this machine exports DOCKER_DEFAULT_PLATFORM=linux/x86_64 globally
+    # (~/.dotfiles/mac/shell/.shell/env.sh), so inheriting it would build
+    # the whole stack amd64-under-Rosetta on an arm64 Mac - where embedding
+    # is slow enough that builds and seed runs look like they hang rather
+    # than fail. That is the bug this pin exists to prevent.
+    #
+    # Because the two disagree, a bare `docker compose build` in that shell
+    # now fails fast with "build.platforms does not support value set by
+    # DOCKER_DEFAULT_PLATFORM" instead of silently doing the wrong thing.
+    # Use `make up` / `make build`, which set them to agree. On an amd64
+    # host, run `make PLATFORM=linux/amd64 up`.
+    #
+    # Measured on this host, native arm64: dependency layer builds from
+    # scratch in ~66s; 89 real chunks embed in ~49s; a single query embeds
+    # in 0.26s.
+    platform: ${REPOSAGE_PLATFORM:-linux/arm64}
+    restart: unless-stopped
     build:
       context: .
-      args:
-        GITHUB_USER: ${GITHUB_USER}
-      secrets:
-        - github_token
     ports:
       - "8000:8000"
     environment:
-      # Still required at runtime even though sync doesn't re-run - load_config()
-      # always needs it.
       GITHUB_USER: ${GITHUB_USER}
       LLM_PROVIDER: anthropic
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
@@ -28,16 +30,17 @@ services:
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1024}
       # Recommended set for a public deployment - an open, uncapped
       # instance can have its budget exhausted by a stranger before the
-      # friend/recruiter it's actually meant for gets to try it.
+      # friend/recruiter it's actually meant for gets to use it.
       WEB_ACCESS_CODE: ${WEB_ACCESS_CODE}
       WEB_HOURLY_REQUEST_LIMIT: ${WEB_HOURLY_REQUEST_LIMIT:-10}
       WEB_DAILY_REQUEST_LIMIT: ${WEB_DAILY_REQUEST_LIMIT:-30}
-      # No volumes: at this traffic level, a container restart resetting
-      # the sandbox slot/budget counters (both cheap to rebuild) is a
-      # reasonable trade for not managing persistent volumes. The baked-in
-      # showcase repos live in the image itself, not a volume, so a
-      # rebuild always reflects the latest repos.txt/sync without needing
-      # to separately manage volume invalidation.
+    volumes:
+      # Repos and ChromaDB embeddings live in a named volume so they survive
+      # rebuilds. Seed once with `docker compose run --rm reposage-web ...`
+      # (see Dockerfile header). Re-run sync+embed when repos.txt changes.
+      # The embedding model is NOT here - it's baked into the image, because
+      # a named volume would be created root-owned and this runs as uid 1000.
+      - reposage-data:/app/data
     # Hardening for a container that processes third-party content (the
     # sandbox clones visitor-submitted public repos): no Linux capabilities
     # beyond the default-safe set, no privilege escalation, and hard
@@ -52,9 +55,30 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    mem_limit: 2g
     pids_limit: 256
+    # Sized from measurement, not guesswork. Loading the fp32 embedding
+    # model alone peaks at ~4.0GB RSS, and a worst-case encode (a full
+    # batch of maximum-length chunks, which a hostile sandbox submission
+    # can force) peaks at ~5.9GB. The previous 2g limit could not fit even
+    # the model, and because Docker's default swap allowance is 2x the
+    # memory limit, it thrashed instead of failing - a container pinned at
+    # 100% CPU forever rather than a clean OOM. memswap_limit == mem_limit
+    # disables that swap headroom so an overrun dies loudly and restarts.
+    mem_limit: 8g
+    memswap_limit: 8g
 
-secrets:
-  github_token:
-    environment: GITHUB_TOKEN
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflared/creds.json:/etc/cloudflared/creds.json:ro
+    depends_on:
+      # Wait for the model to finish loading, not just for the port to open -
+      # otherwise the tunnel serves 524s for the first ~30s after every deploy.
+      reposage-web:
+        condition: service_healthy
+
+volumes:
+  reposage-data:
