@@ -13,14 +13,15 @@
 ; function *is* the inner call_expression, so matching recurses into it and
 ; the underlying name is captured once.
 ;
-; Two further shapes did *not* occur in that corpus, which only ever
-; constructed bare types and only ever applied type arguments to a plain
-; identifier: a qualified or generic constructor (`new pkg.Foo(...)`,
-; `new Foo[Int](...)`) and a receiver-qualified generic call
-; (`xs.foldLeft[Int](0)(f)`). They are covered here anyway, having been
-; verified the same way - against the tree-sitter-scala grammar and by
-; parsing samples of each - rather than left to fail silently the first
-; time a repo uses them.
+; Three further shapes did *not* occur in that corpus, which only ever
+; constructed bare types, only ever applied type arguments to a plain
+; identifier and never mixed a trait into a constructor: a qualified or
+; generic constructor (`new pkg.Foo(...)`, `new Foo[Int](...)`), a
+; receiver-qualified generic call (`xs.foldLeft[Int](0)(f)`) and a mixin
+; constructor (`new Foo with Bar {}`). They are covered here anyway,
+; having been verified the same way - against the tree-sitter-scala
+; grammar and by parsing samples of each - rather than left to fail
+; silently the first time a repo uses them.
 ;
 ; Infix calls are deliberately not captured. Scala parses `a + b` and
 ; `xs to n` both as infix_expression, distinguished only by whether the
@@ -56,6 +57,15 @@
 ; nests it under stable_type_identifier and parameterising it under
 ; generic_type. Matching `type:` rather than any descendant keeps the type
 ; arguments themselves (the `String` in `new Queue[String]`) out.
+;
+; Mixing traits in (`new Foo with Bar {}`) moves the whole type under a
+; compound_type, where the constructed type is the `base:` field and each
+; mixed-in trait an `extra:` - and only the base is being constructed, so
+; only the base is captured. A compound_type base carries its own copy of
+; the qualified and generic nesting above, plus one shape unique to it:
+; constructor arguments, which instance_expression normally holds in its
+; own `arguments:` field, move inside an applied_constructor_type when a
+; mixin is present (`new Foo(1) with Bar {}`).
 (instance_expression
   [
     (type_identifier) @call_name
@@ -66,5 +76,29 @@
         (type_identifier) @call_name
         (stable_type_identifier
           (type_identifier) @call_name)
+      ])
+    (compound_type
+      base: [
+        (type_identifier) @call_name
+        (stable_type_identifier
+          (type_identifier) @call_name)
+        (generic_type
+          type: [
+            (type_identifier) @call_name
+            (stable_type_identifier
+              (type_identifier) @call_name)
+          ])
+        (applied_constructor_type
+          [
+            (type_identifier) @call_name
+            (stable_type_identifier
+              (type_identifier) @call_name)
+            (generic_type
+              type: [
+                (type_identifier) @call_name
+                (stable_type_identifier
+                  (type_identifier) @call_name)
+              ])
+          ])
       ])
   ])

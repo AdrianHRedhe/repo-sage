@@ -73,6 +73,23 @@ def test_extract_call_names_finds_qualified_and_generic_constructors_in_scala() 
     assert names == {"Cache", "Grid"}
 
 
+def test_extract_call_names_finds_mixin_constructors_in_scala() -> None:
+    """Mixing traits in nests the constructed type under a compound_type,
+    where only the `base:` is actually constructed - the `extra:` traits are
+    not calls - and constructor arguments move inside an
+    applied_constructor_type."""
+    source = (
+        "def outer() =\n"
+        "  new Grid with Debug {}\n"
+        "  new Cache[String] with Debug {}\n"
+        "  new solver.Board(1) with Debug {}\n"
+    )
+
+    names = extract_call_names(source, LANGUAGE_CONFIGS["Scala"])
+
+    assert names == {"Grid", "Cache", "Board"}
+
+
 def test_extract_call_names_ignores_type_arguments_of_constructors_in_scala() -> None:
     """Only the constructed type is a call; the type arguments it is applied
     to are not, however deeply they nest."""

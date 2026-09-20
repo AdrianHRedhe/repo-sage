@@ -6,17 +6,23 @@ from tree_sitter_language_pack import get_language, get_parser
 from reposage.chunking.chunk import Chunk
 from reposage.chunking.language_config import LANGUAGE_CONFIGS, LanguageConfig
 
-_query_cache: dict[Path, Query] = {}
+# Keyed by (grammar, query file): a compiled Query is bound to *both* the
+# grammar it was compiled against and the query source it was compiled
+# from, so both belong in the key. Two configs can share a ts_language
+# while pointing at different queries, and two configs can share a query
+# file while naming different grammars.
+_query_cache: dict[tuple[str, Path], Query] = {}
 
 
 def _get_query(config: LanguageConfig) -> Query:
-    cached = _query_cache.get(config.query_path)
+    key = (config.ts_language, config.query_path)
+    cached = _query_cache.get(key)
     if cached is not None:
         return cached
 
     language = get_language(config.ts_language)
     query = Query(language, config.query_path.read_text())
-    _query_cache[config.query_path] = query
+    _query_cache[key] = query
     return query
 
 
