@@ -9,17 +9,54 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert";
 
+// Evaluating the page runs its bootstrap too - loadConfig/loadRepos/
+// refreshSandboxStatus and the iframe-height IIFE - which is not what is
+// under test here, so the stubs below are built so none of it can do
+// anything: fetch returns a promise that never settles, so every
+// bootstrap coroutine suspends at its first await and can neither touch
+// the DOM further nor reject; window.self === window.top, so the iframe
+// branch is skipped; and every DOM lookup returns a stub that accepts any
+// property or call. If page code manages to fail anyway, say so plainly
+// instead of exiting non-zero with no explanation after the assertions
+// below have already reported success.
+for (const event of ["unhandledRejection", "uncaughtException"]) {
+  process.on(event, (err) => {
+    console.error(`${event} from page code outside highlightCode - not a highlighting failure:`, err);
+    process.exit(1);
+  });
+}
+
+const stubEl = new Proxy({}, { get: () => () => stubEl, set: () => true });
+const stubDocument = {
+  getElementById: () => stubEl,
+  querySelector: () => stubEl,
+  querySelectorAll: () => [],
+  createElement: () => stubEl,
+  addEventListener: () => {},
+  documentElement: stubEl,
+  body: stubEl,
+};
+const stubWindow = { addEventListener: () => {}, parent: { postMessage: () => {} }, location: { search: "" } };
+stubWindow.self = stubWindow;
+stubWindow.top = stubWindow;
+const stubLocalStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+const stubFetch = () => new Promise(() => {});
+class StubResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
 const html = readFileSync("src/reposage/web/static/index.html", "utf8");
 const script = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join("\n");
-const { highlightCode } = new Function(`
-  const stubEl = new Proxy({}, { get: () => () => stubEl });
-  const document = { getElementById: () => stubEl, addEventListener: () => {}, querySelector: () => stubEl, querySelectorAll: () => [] };
-  const window = { addEventListener: () => {}, parent: { postMessage: () => {} }, location: { search: "" } };
-  const localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-  const fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ repos: [], sandbox: null }) });
-  ${script}
-  return { highlightCode };
-`)();
+const { highlightCode } = new Function(
+  "document",
+  "window",
+  "localStorage",
+  "fetch",
+  "ResizeObserver",
+  `${script}\nreturn { highlightCode };`,
+)(stubDocument, stubWindow, stubLocalStorage, stubFetch, StubResizeObserver);
 
 const spans = (out, cls) => out.match(new RegExp(`<span class="${cls}">([\\s\\S]*?)</span>`, "g")) || [];
 
@@ -69,10 +106,37 @@ assert.strictEqual(spans(pyOut, "tok-keyword").length, 2, "def/return still keyw
 assert.strictEqual(spans(pyOut, "tok-string").length, 1);
 assert.strictEqual(spans(pyOut, "tok-comment").length, 1);
 
+// --- fence aliases pick the same comment syntax as the canonical name,
+// so ```py neither loses its "#" comments nor eats "a // b" to end of line
+for (const [alias, canonical] of [["py", "Python"], ["rb", "Ruby"], ["ps1", "powershell"], ["tf", "hcl"], ["htm", "HTML"]]) {
+  const sample = "# c\nx = 1 // 2\n-- d\n<!-- e -->\n/* f */";
+  assert.strictEqual(highlightCode(sample, alias), highlightCode(sample, canonical), `${alias} matches ${canonical}`);
+}
+const pyAliasOut = highlightCode("# a real comment\nq = a // b", "py");
+assert.strictEqual(spans(pyAliasOut, "tok-comment").length, 1, "py has exactly the hash comment");
+assert.ok(pyAliasOut.includes("// b"), "py floor division is not swallowed as a comment");
+
+// --- a fence label naming an Object.prototype member is just an unknown
+// label: it must not throw, and must not inherit some other comment set
+for (const lang of ["constructor", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf", "__proto__"]) {
+  const out = highlightCode('x := 1 // ok\n/* b */ f("hi")\na #b', lang);
+  assert.strictEqual(spans(out, "tok-comment").length, 2, `${lang} falls back to slash+block`);
+}
+
+// --- an unlabelled fence is code of unknown language, not prose
+const bareOut = highlightCode('const x = 1; // ok\nreturn "s";', "");
+assert.strictEqual(spans(bareOut, "tok-comment").length, 1, "unlabelled fence still gets comments");
+assert.ok(spans(bareOut, "tok-keyword").length > 0, "unlabelled fence still gets keywords");
+
 // --- escaping is never lost, whatever the language
-for (const lang of ["Python", "Markdown", "CSS", "json", ""]) {
+for (const lang of ["Python", "Markdown", "CSS", "json", "", "constructor"]) {
   const out = highlightCode('<script>alert("x")</script>', lang);
   assert.ok(!out.includes("<script>"), `raw tag must stay escaped for ${lang}`);
 }
+
+// Let anything the page scheduled settle before reporting success, so a
+// bootstrap failure is reported by the handlers above rather than landing
+// after this line.
+await new Promise((resolve) => setImmediate(resolve));
 
 console.log("all highlightCode assertions passed");

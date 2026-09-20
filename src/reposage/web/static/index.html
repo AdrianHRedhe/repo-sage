@@ -178,10 +178,18 @@ const COMMENT_MARKUP = "<!--[\\s\\S]*?-->";
 // Keyed by the lowercased language name, which reaches here from two
 // places: a chunk's own language (filters/languages.py) and the label on
 // a ```fence in the model's answer, so the common fence aliases are
-// listed alongside the canonical names.
-const COMMENT_SYNTAX = {
+// listed alongside the canonical names - a missing alias is not cosmetic,
+// it drops the language onto the C-like fallback, where "#" stops being a
+// comment and Python's "a // b" becomes one.
+//
+// Prototype-less, so a label that happens to name an Object.prototype
+// member ("constructor", "toString") misses like any other unknown label
+// instead of yielding an inherited function.
+const COMMENT_SYNTAX = Object.assign(Object.create(null), {
   python: [COMMENT_HASH],
+  py: [COMMENT_HASH],
   ruby: [COMMENT_HASH],
+  rb: [COMMENT_HASH],
   shell: [COMMENT_HASH],
   bash: [COMMENT_HASH],
   sh: [COMMENT_HASH],
@@ -189,21 +197,43 @@ const COMMENT_SYNTAX = {
   yaml: [COMMENT_HASH],
   yml: [COMMENT_HASH],
   toml: [COMMENT_HASH],
+  ini: [COMMENT_HASH],
+  cfg: [COMMENT_HASH],
+  conf: [COMMENT_HASH],
+  properties: [COMMENT_HASH],
   dockerfile: [COMMENT_HASH],
+  docker: [COMMENT_HASH],
+  containerfile: [COMMENT_HASH],
   makefile: [COMMENT_HASH],
   make: [COMMENT_HASH],
+  mk: [COMMENT_HASH],
+  powershell: [COMMENT_HASH],
+  ps1: [COMMENT_HASH],
+  r: [COMMENT_HASH],
+  elixir: [COMMENT_HASH],
+  ex: [COMMENT_HASH],
+  exs: [COMMENT_HASH],
+  graphql: [COMMENT_HASH],
+  gql: [COMMENT_HASH],
   // PHP and Perl accept both.
   php: [COMMENT_HASH, COMMENT_SLASH, COMMENT_BLOCK],
   perl: [COMMENT_HASH],
+  pl: [COMMENT_HASH],
+  // HCL accepts all three.
+  hcl: [COMMENT_HASH, COMMENT_SLASH, COMMENT_BLOCK],
+  tf: [COMMENT_HASH, COMMENT_SLASH, COMMENT_BLOCK],
+  terraform: [COMMENT_HASH, COMMENT_SLASH, COMMENT_BLOCK],
   // "#" in CSS is an id selector or a hex colour, never a comment.
   css: [COMMENT_BLOCK],
   scss: [COMMENT_SLASH, COMMENT_BLOCK],
   sql: [COMMENT_DASH, COMMENT_BLOCK],
   html: [COMMENT_MARKUP],
+  htm: [COMMENT_MARKUP],
   vue: [COMMENT_MARKUP, COMMENT_SLASH, COMMENT_BLOCK],
   xml: [COMMENT_MARKUP],
+  svg: [COMMENT_MARKUP],
   json: [],
-};
+});
 
 // C-like: the majority of the languages here, and the safest guess for a
 // fence label we don't recognise.
@@ -213,8 +243,13 @@ const DEFAULT_COMMENT_SYNTAX = [COMMENT_SLASH, COMMENT_BLOCK];
 // a way that is plainly visible: "#" headings become comments, an
 // apostrophe in "don't" opens a string that runs to the next one - so a
 // whole sentence renders as a string - and ordinary numbers get tinted.
-// These render escaped and untouched.
-const PROSE_LANGUAGES = new Set(["markdown", "md", "mdx", "text", "txt", "plaintext", ""]);
+// These render escaped and untouched. The empty label is deliberately not
+// one of them: it means code of an unknown language, not prose, so it
+// takes DEFAULT_COMMENT_SYNTAX and is still highlighted. answer.py's
+// SYSTEM_PREAMBLE asks the model to label its fences, so a bare ``` is the
+// exception, and silently leaving those blocks plain would be worse than
+// highlighting them with the C-like guess.
+const PROSE_LANGUAGES = new Set(["markdown", "md", "mdx", "text", "txt", "plaintext"]);
 const HIGHLIGHT_KEYWORDS = new Set([
   "function", "func", "def", "class", "struct", "interface", "enum", "impl", "trait", "return",
   "if", "elif", "else", "for", "while", "loop", "switch", "case", "default", "break", "continue",
