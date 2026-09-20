@@ -5,14 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>RepoSage</title>
 <style>
+  /* Palette matches the "cyan" theme adrianhredhe.com's own
+     /services/repo_sage page uses (app/config/themes.py there), so the
+     demo and its listing page read as one product. */
   :root {
     color-scheme: light dark;
-    --bg: #0f1115;
-    --panel: #171a21;
-    --border: #2a2e38;
-    --text: #e8eaed;
-    --muted: #9aa2af;
-    --accent: #6ea8fe;
+    --bg: #262626;
+    --panel: #313131;
+    --border: #404040;
+    --text: #eeeeee;
+    --muted: #a2a2a2;
+    --accent: #95e6cb;
+    --link-hover: #f99734;
   }
   * { box-sizing: border-box; }
   body {
@@ -29,7 +33,7 @@
     padding: 0.4rem 0.9rem; border-radius: 999px; border: 1px solid var(--border);
     background: transparent; color: var(--muted); cursor: pointer; font-size: 0.85rem;
   }
-  .tab.active { background: var(--accent); color: #0f1115; border-color: var(--accent); font-weight: 600; }
+  .tab.active { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
   .panel {
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
     padding: 1.1rem; margin-bottom: 1rem;
@@ -37,18 +41,19 @@
   label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.3rem; }
   input[type=text], select, textarea {
     width: 100%; padding: 0.55rem 0.7rem; border-radius: 8px; border: 1px solid var(--border);
-    background: #0f1115; color: var(--text); font-size: 0.95rem; margin-bottom: 0.8rem;
+    background: var(--bg); color: var(--text); font-size: 0.95rem; margin-bottom: 0.8rem;
   }
   button {
-    background: var(--accent); color: #0f1115; border: none; border-radius: 8px;
+    background: var(--accent); color: var(--bg); border: none; border-radius: 8px;
     padding: 0.55rem 1.1rem; font-weight: 600; cursor: pointer; font-size: 0.9rem;
   }
   button:disabled { opacity: 0.5; cursor: default; }
   button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
   .answer { white-space: pre-wrap; line-height: 1.5; margin-top: 1rem; }
   .answer a { color: var(--accent); }
+  .answer a:hover { color: var(--link-hover); }
   .answer code {
-    background: #0f1115; padding: 0.1rem 0.35rem; border-radius: 4px; white-space: pre-wrap;
+    background: var(--bg); padding: 0.1rem 0.35rem; border-radius: 4px; white-space: pre-wrap;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85em;
   }
   .section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 1rem 0 0.4rem; }
@@ -59,16 +64,17 @@
     margin: 0.4rem 0 0.6rem; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
   }
   .code-lang {
-    font-size: 0.72rem; color: var(--muted); background: #0f1115; padding: 0.3rem 0.6rem;
+    font-size: 0.72rem; color: var(--muted); background: var(--bg); padding: 0.3rem 0.6rem;
     border-bottom: 1px solid var(--border);
   }
   .code-lang a { color: var(--accent); }
+  .code-lang a:hover { color: var(--link-hover); }
   .code-block pre {
-    margin: 0; padding: 0.7rem 0.8rem; overflow-x: auto; background: #0b0d11; white-space: pre;
+    margin: 0; padding: 0.7rem 0.8rem; overflow-x: auto; background: var(--bg); white-space: pre;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; line-height: 1.45;
   }
   .code-lineage {
-    font-size: 0.72rem; color: var(--muted); padding: 0.5rem 0.8rem; background: #0f1115;
+    font-size: 0.72rem; color: var(--muted); padding: 0.5rem 0.8rem; background: var(--bg);
     border-top: 1px solid var(--border);
   }
   .lineage-title { text-transform: uppercase; letter-spacing: 0.03em; margin: 0.3rem 0 0.15rem; }
@@ -76,6 +82,7 @@
   .lineage-ref { margin: 0.1rem 0 0.1rem 0.6rem; }
   .lineage-ref .chunk { padding: 0; margin-top: 0.15rem; }
   a.citation-link, .code-lineage a { color: var(--accent); cursor: pointer; }
+  a.citation-link:hover, .code-lineage a:hover { color: var(--link-hover); }
   .tok-comment { color: #7a8598; font-style: italic; }
   .tok-string { color: #d4a373; }
   .tok-number { color: #a3d9a5; }
