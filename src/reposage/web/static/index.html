@@ -277,7 +277,21 @@ function renderAnswerMarkdown(text, allCitations) {
   const codeBlocks = [];
   const withoutCodeBlocks = text.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
     codeBlocks.push({ lang, code });
-    return ` CODEBLOCK${codeBlocks.length - 1} `;
+    // \u0000 rather than a literal NUL byte, for two reasons.
+    //
+    // Source: a literal NUL makes this whole file register as binary -
+    // `file` reports `data` and grep silently matches nothing in it.
+    //
+    // Runtime: the escape is also the stronger sentinel. The HTML
+    // tokenizer rewrites a literal U+0000 in script data to U+FFFD, so
+    // the literal version was really sentinelling on U+FFFD - on both the
+    // produce and the consume side, which is why it worked - but U+FFFD
+    // can legitimately occur in the model's answer text (any lossy decode
+    // upstream emits it), so it could collide with real content. The
+    // escape survives tokenization as a true U+0000, which cannot occur
+    // in that text. Keep it escaped; tests/test_web_static.py fails if a
+    // literal byte is pasted back in.
+    return `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
   });
 
   let html = escapeHtml(withoutCodeBlocks);
@@ -297,7 +311,7 @@ function renderAnswerMarkdown(text, allCitations) {
   html = html.replace(/`([^`\n]+)`/g, (match, code) => `<code>${code}</code>`);
   html = html.replace(/\*\*([^*\n]+)\*\*/g, (match, bold) => `<strong>${bold}</strong>`);
 
-  return html.replace(/ CODEBLOCK(\d+) /g, (match, i) => {
+  return html.replace(/\u0000CODEBLOCK(\d+)\u0000/g, (match, i) => {
     const { lang, code } = codeBlocks[Number(i)];
     return `<div class="code-block"><div class="code-lang">${escapeHtml(lang.toLowerCase())}</div><pre><code>${highlightCode(code)}</code></pre></div>`;
   });
