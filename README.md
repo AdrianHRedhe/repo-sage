@@ -211,3 +211,9 @@ the lock files a cache *hit* needs.
 ```bash
 uv run pytest
 ```
+
+The web page's syntax highlighter is JavaScript, so its assertions live in
+`tests/highlight_code_assertions.mjs` and run under `node`. With no `node`
+on PATH that test skips instead of failing, so install it before changing
+`src/reposage/web/static/index.html`. CI pins a version, so it always runs
+there.
