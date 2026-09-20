@@ -46,8 +46,41 @@
   button:disabled { opacity: 0.5; cursor: default; }
   button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
   .answer { white-space: pre-wrap; line-height: 1.5; margin-top: 1rem; }
+  .answer a { color: var(--accent); }
+  .answer code {
+    background: #0f1115; padding: 0.1rem 0.35rem; border-radius: 4px; white-space: pre-wrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85em;
+  }
   .section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 1rem 0 0.4rem; }
   .chunk { font-size: 0.85rem; color: var(--muted); padding: 0.15rem 0; }
+  .chunk summary { cursor: pointer; }
+  .chunk summary:hover { color: var(--text); }
+  .code-block {
+    margin: 0.4rem 0 0.6rem; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  .code-lang {
+    font-size: 0.72rem; color: var(--muted); background: #0f1115; padding: 0.3rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .code-lang a { color: var(--accent); }
+  .code-block pre {
+    margin: 0; padding: 0.7rem 0.8rem; overflow-x: auto; background: #0b0d11; white-space: pre;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; line-height: 1.45;
+  }
+  .code-lineage {
+    font-size: 0.72rem; color: var(--muted); padding: 0.5rem 0.8rem; background: #0f1115;
+    border-top: 1px solid var(--border);
+  }
+  .lineage-title { text-transform: uppercase; letter-spacing: 0.03em; margin: 0.3rem 0 0.15rem; }
+  .lineage-title:first-child { margin-top: 0; }
+  .lineage-ref { margin: 0.1rem 0 0.1rem 0.6rem; }
+  .lineage-ref .chunk { padding: 0; margin-top: 0.15rem; }
+  a.citation-link, .code-lineage a { color: var(--accent); cursor: pointer; }
+  .tok-comment { color: #7a8598; font-style: italic; }
+  .tok-string { color: #d4a373; }
+  .tok-number { color: #a3d9a5; }
+  .tok-keyword { color: #c792ea; }
+  .tok-literal { color: var(--accent); }
   .status { font-size: 0.85rem; color: var(--muted); margin-top: 0.5rem; }
   .error { color: #ff6b6b; font-size: 0.85rem; margin-top: 0.5rem; }
   [hidden] { display: none !important; }
@@ -113,37 +146,180 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, ch => chars[ch]);
 }
 
-function chunkHtml(c, index) {
-  const prefix = index != null ? `[${index}] ` : "";
-  const label = escapeHtml(`${c.repo}/${c.file_path}:${c.start_line}-${c.end_line} ${c.label}`);
-  const body = c.url ? `<a href="${c.url}" target="_blank" rel="noopener noreferrer">${label}</a>` : label;
-  return `<div class="chunk">${prefix}${body}</div>`;
+// A small, generic (not per-language) syntax highlighter: comments,
+// strings, numbers and a keyword set merged across every language this
+// app chunks (see filters/languages.py) - not a real grammar per
+// language, so it can occasionally over/under-highlight, but it's one
+// dependency-free implementation instead of a per-language table or a
+// third-party library. Operates on raw (unescaped) code and escapes each
+// piece itself, since escaping first would corrupt the string/quote
+// matching below.
+const HIGHLIGHT_KEYWORDS = new Set([
+  "function", "func", "def", "class", "struct", "interface", "enum", "impl", "trait", "return",
+  "if", "elif", "else", "for", "while", "loop", "switch", "case", "default", "break", "continue",
+  "match", "try", "catch", "except", "finally", "throw", "throws", "raise", "new", "delete",
+  "import", "from", "export", "package", "module", "namespace", "public", "private", "protected",
+  "static", "final", "const", "let", "var", "mut", "fn", "pub", "use", "mod", "crate", "self",
+  "Self", "this", "super", "typeof", "instanceof", "in", "of", "is", "as", "with", "yield",
+  "async", "await", "lambda", "pass", "global", "nonlocal", "assert", "del", "go", "defer",
+  "chan", "select", "range", "type", "extends", "implements", "abstract", "override", "readonly",
+]);
+const HIGHLIGHT_LITERALS = new Set([
+  "true", "false", "null", "nil", "none", "None", "True", "False", "undefined", "NaN",
+]);
+
+function highlightCode(code) {
+  const pattern = /(\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(\b\d+\.?\d*\b)|(\b[A-Za-z_][A-Za-z0-9_]*\b)/g;
+  let out = "";
+  let last = 0;
+  let match;
+  while ((match = pattern.exec(code))) {
+    out += escapeHtml(code.slice(last, match.index));
+    const [full, comment, string, number, word] = match;
+    if (comment) out += `<span class="tok-comment">${escapeHtml(comment)}</span>`;
+    else if (string) out += `<span class="tok-string">${escapeHtml(string)}</span>`;
+    else if (number) out += `<span class="tok-number">${escapeHtml(number)}</span>`;
+    else if (HIGHLIGHT_KEYWORDS.has(word)) out += `<span class="tok-keyword">${escapeHtml(word)}</span>`;
+    else if (HIGHLIGHT_LITERALS.has(word)) out += `<span class="tok-literal">${escapeHtml(word)}</span>`;
+    else out += escapeHtml(word);
+    last = match.index + full.length;
+  }
+  out += escapeHtml(code.slice(last));
+  return out;
 }
 
-// The model cites context chunks inline as "[1]", "[2]", ... (1-indexed
-// into answer.citations, see answer.py's _context_block/SYSTEM_PREAMBLE).
-// Turn those into links to the matching source when one is resolvable.
-function linkifyAnswer(text, citations) {
-  return escapeHtml(text).replace(/\[(\d+)\]/g, (match, numStr) => {
-    const citation = citations[Number(numStr) - 1];
-    if (!citation || !citation.url) return match;
-    return `<a href="${citation.url}" target="_blank" rel="noopener noreferrer">${match}</a>`;
+// Every chunk shown anywhere on the page (Sources, then Related code,
+// continuing the same numbering the model was given - see answer.py's
+// _build_prompt/_context_block) gets a stable "citation-<n>" id, so a
+// "[n]" reference - whether in the answer text or in a calls/called_by
+// list - can jump straight to it in place instead of leaving the page.
+function buildCitationIndex(allCitations) {
+  const map = new Map();
+  allCitations.forEach((c, i) => map.set(`${c.repo}|${c.file_path}|${c.start_line}|${c.end_line}`, i + 1));
+  return map;
+}
+
+function citationLinkHtml(targetIndex, label) {
+  return `<a href="#citation-${targetIndex}" class="citation-link" data-target="citation-${targetIndex}">${label}</a>`;
+}
+
+// Calls/called_by names (callgraph.py, resolved in reposage/answer.py):
+// a name already shown elsewhere on the page just jumps there; one that
+// isn't (resolved to a chunk, but not among the top-k/related shown) is
+// rendered inline via chunkHtml itself, same as a small Related entry;
+// one that couldn't be resolved at all (external/stdlib call, or a
+// heuristic false positive) is plain text.
+function lineageSectionHtml(title, refs, citationIndex) {
+  if (!refs || !refs.length) return "";
+  const items = refs.map(ref => {
+    const key = `${ref.repo}|${ref.file_path}|${ref.start_line}|${ref.end_line}`;
+    const targetIndex = citationIndex.get(key);
+    if (targetIndex) return `<div class="lineage-ref">${citationLinkHtml(targetIndex, escapeHtml(ref.name))}</div>`;
+    if (ref.code) {
+      return `<div class="lineage-ref">${chunkHtml({
+        repo: ref.repo, file_path: ref.file_path, start_line: ref.start_line, end_line: ref.end_line,
+        label: ref.name, code: ref.code, language: ref.language, url: ref.url, calls: [], called_by: [],
+      }, null, citationIndex)}</div>`;
+    }
+    return `<div class="lineage-ref">${escapeHtml(ref.name)}</div>`;
+  }).join("");
+  return `<div class="lineage-title">${title}</div>${items}`;
+}
+
+function lineageHtml(c, citationIndex) {
+  const calls = lineageSectionHtml("Calls", c.calls, citationIndex);
+  const calledBy = lineageSectionHtml("Called by", c.called_by, citationIndex);
+  return calls || calledBy ? `<div class="code-lineage">${calls}${calledBy}</div>` : "";
+}
+
+// Clicking a citation expands it in place to show the actual chunk of
+// code it was embedded from, rather than only linking out to GitHub -
+// so you can see what the model was grounded in without leaving the page.
+// `index` (when given) both numbers it and gives it the "citation-<n>"
+// id that "[n]" references and calls/called_by links jump to.
+function chunkHtml(c, index, citationIndex) {
+  const prefix = index != null ? `[${index}] ` : "";
+  const idAttr = index != null ? ` id="citation-${index}"` : "";
+  const label = escapeHtml(`${c.repo}/${c.file_path}:${c.start_line}-${c.end_line} ${c.label}`);
+  if (!c.code) return `<div class="chunk"${idAttr}>${prefix}${label}</div>`;
+
+  const lang = (c.language || "").toLowerCase();
+  const githubLink = c.url
+    ? ` &middot; <a href="${c.url}" target="_blank" rel="noopener noreferrer">View on GitHub &#8599;</a>`
+    : "";
+  return `<details class="chunk"${idAttr}>
+    <summary>${prefix}${label}</summary>
+    <div class="code-block">
+      <div class="code-lang">${escapeHtml(lang)}${githubLink}</div>
+      <pre><code>${highlightCode(c.code)}</code></pre>
+      ${lineageHtml(c, citationIndex)}
+    </div>
+  </details>`;
+}
+
+// Minimal Markdown rendering for the model's answer text: fenced code
+// blocks and inline code spans become real code elements, **bold**,
+// "## headers" and markdown links render properly, and "[1]"-style
+// citation markers (see answer.py's _context_block/SYSTEM_PREAMBLE) jump
+// to their source chunk on this same page - only the chunk's own
+// "View on GitHub" link actually leaves the page. Deliberately not a
+// full CommonMark parser - no build step, no external dependency - just
+// the subset of markdown the model's answers actually use; text is
+// escaped before any tag is introduced.
+function renderAnswerMarkdown(text, allCitations) {
+  const codeBlocks = [];
+  const withoutCodeBlocks = text.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+    codeBlocks.push({ lang, code });
+    return ` CODEBLOCK${codeBlocks.length - 1} `;
+  });
+
+  let html = escapeHtml(withoutCodeBlocks);
+
+  html = html.replace(/^#{1,6}\s+(.*)$/gm, (match, heading) => `<strong>${heading}</strong>`);
+  html = html.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (match, label, url) => {
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
+  html = html.replace(/\[(\d+)\]/g, (match, numStr) => {
+    const n = Number(numStr);
+    return allCitations[n - 1] ? citationLinkHtml(n, match) : match;
+  });
+  html = html.replace(/`([^`\n]+)`/g, (match, code) => `<code>${code}</code>`);
+  html = html.replace(/\*\*([^*\n]+)\*\*/g, (match, bold) => `<strong>${bold}</strong>`);
+
+  return html.replace(/ CODEBLOCK(\d+) /g, (match, i) => {
+    const { lang, code } = codeBlocks[Number(i)];
+    return `<div class="code-block"><div class="code-lang">${escapeHtml(lang.toLowerCase())}</div><pre><code>${highlightCode(code)}</code></pre></div>`;
   });
 }
 
 function renderResult(answer) {
   const el = document.getElementById("result");
+  const allCitations = answer.citations.concat(answer.related);
+  const citationIndex = buildCitationIndex(allCitations);
   const section = (title, items, fmt) =>
     items.length ? `<div class="section-title">${title}</div>` + items.map(fmt).join("") : "";
 
   el.innerHTML = `
     <div class="panel">
-      <div class="answer">${linkifyAnswer(answer.text, answer.citations)}</div>
-      ${section("Sources", answer.citations, (c, i) => chunkHtml(c, i + 1))}
-      ${section("Related code", answer.related, c => chunkHtml(c))}
+      <div class="answer">${renderAnswerMarkdown(answer.text, allCitations)}</div>
+      ${section("Sources", answer.citations, (c, i) => chunkHtml(c, i + 1, citationIndex))}
+      ${section("Related code", answer.related, (c, i) => chunkHtml(c, answer.citations.length + i + 1, citationIndex))}
       ${section("Explored further", answer.explored, e => `<div class="chunk">${escapeHtml(e)}</div>`)}
     </div>`;
 }
+
+// Event delegation on the persistent #result container (its children are
+// replaced wholesale by renderResult, but the container itself isn't) -
+// one listener handles every "[n]"/calls/called_by jump, present or future.
+document.getElementById("result").addEventListener("click", e => {
+  const link = e.target.closest("a.citation-link");
+  if (!link) return;
+  e.preventDefault();
+  const target = document.getElementById(link.dataset.target);
+  if (!target) return;
+  if (target.tagName === "DETAILS") target.open = true;
+  target.scrollIntoView({ behavior: "smooth", block: "start" });
+});
 
 function renderError(message) {
   document.getElementById("result").innerHTML = `<div class="error">${message}</div>`;

@@ -4,7 +4,7 @@ import pytest
 from conftest import make_config
 from fastapi.testclient import TestClient
 
-from reposage.answer import Answer, Citation
+from reposage.answer import Answer, Citation, SymbolRef
 from reposage.web import app as app_module
 from reposage.web.budget import BudgetGuard
 
@@ -30,7 +30,29 @@ def client(tmp_path: Path):
 def _fake_answer(*args, **kwargs) -> Answer:
     return Answer(
         text="the answer",
-        citations=[Citation(repo="csv2md", file_path="main.go", start_line=1, end_line=2, label="main")],
+        citations=[
+            Citation(
+                repo="csv2md",
+                file_path="main.go",
+                start_line=1,
+                end_line=2,
+                label="main",
+                code="func main() {}",
+                language="Go",
+                calls=(
+                    SymbolRef(
+                        name="csvToMarkdown", repo="csv2md", file_path="main.go", start_line=10, end_line=20,
+                        code="func csvToMarkdown() {}", language="Go",
+                    ),
+                ),
+                called_by=(
+                    SymbolRef(
+                        name="unresolved", repo=None, file_path=None, start_line=None, end_line=None,
+                        code=None, language=None,
+                    ),
+                ),
+            )
+        ],
     )
 
 
@@ -71,7 +93,40 @@ def test_api_ask_returns_answer_shape(client, monkeypatch: pytest.MonkeyPatch) -
     body = response.json()
     assert body["text"] == "the answer"
     assert body["citations"] == [
-        {"repo": "csv2md", "file_path": "main.go", "start_line": 1, "end_line": 2, "label": "main", "url": None}
+        {
+            "repo": "csv2md",
+            "file_path": "main.go",
+            "start_line": 1,
+            "end_line": 2,
+            "label": "main",
+            "code": "func main() {}",
+            "language": "Go",
+            "calls": [
+                {
+                    "name": "csvToMarkdown",
+                    "repo": "csv2md",
+                    "file_path": "main.go",
+                    "start_line": 10,
+                    "end_line": 20,
+                    "code": "func csvToMarkdown() {}",
+                    "language": "Go",
+                    "url": None,
+                }
+            ],
+            "called_by": [
+                {
+                    "name": "unresolved",
+                    "repo": None,
+                    "file_path": None,
+                    "start_line": None,
+                    "end_line": None,
+                    "code": None,
+                    "language": None,
+                    "url": None,
+                }
+            ],
+            "url": None,
+        }
     ]
     assert body["related"] == []
     assert body["explored"] == []
