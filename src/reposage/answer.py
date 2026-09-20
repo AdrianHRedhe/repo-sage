@@ -28,12 +28,36 @@ SYSTEM_PREAMBLE = (
 
 
 @dataclass(frozen=True)
+class SymbolRef:
+    """A name from a chunk's `calls`/`called_by` lineage, resolved (when
+    the symbol is found elsewhere in the same repo) to where it's actually
+    defined and its own body - so the UI can link straight to it, or show
+    it inline, instead of just a bare name. Everything but `name` is None
+    when the name couldn't be resolved to a chunk (e.g. an external/stdlib
+    call, or a heuristic false positive - see callgraph.py). Deliberately
+    has no lineage of its own (no calls/called_by) to avoid resolving the
+    whole call graph for one answer."""
+
+    name: str
+    repo: str | None
+    file_path: str | None
+    start_line: int | None
+    end_line: int | None
+    code: str | None
+    language: str | None
+
+
+@dataclass(frozen=True)
 class Citation:
     repo: str
     file_path: str
     start_line: int
     end_line: int
     label: str
+    code: str
+    language: str
+    calls: tuple[SymbolRef, ...]
+    called_by: tuple[SymbolRef, ...]
 
 
 @dataclass(frozen=True)
@@ -44,13 +68,46 @@ class Answer:
     explored: list[str] = field(default_factory=list)
 
 
-def _citation_from_metadata(metadata: dict[str, Any]) -> Citation:
+def _parse_names(csv: str) -> tuple[str, ...]:
+    return tuple(n for n in csv.split(",") if n)
+
+
+# Symbol lookups are per (repo, name) and the same callee/caller is often
+# shared by several citations in one answer (a widely-used helper) - a
+# cache keyed on that pair avoids re-querying the store for it each time.
+SymbolCache = dict[tuple[str, str], dict[str, Any] | None]
+
+
+def _resolve_symbol_refs(store: ChromaStore, repo: str, names: tuple[str, ...], cache: SymbolCache) -> tuple[SymbolRef, ...]:
+    refs = []
+    for name in names:
+        key = (repo, name)
+        if key not in cache:
+            cache[key] = store.get_by_symbol(repo, name)
+        hit = cache[key]
+        if hit is None:
+            refs.append(SymbolRef(name=name, repo=None, file_path=None, start_line=None, end_line=None, code=None, language=None))
+        else:
+            m = hit["metadata"]
+            refs.append(SymbolRef(
+                name=name, repo=m["repo"], file_path=m["file_path"], start_line=m["start_line"], end_line=m["end_line"],
+                code=hit["document"], language=m["language"],
+            ))
+    return tuple(refs)
+
+
+def _citation_from_metadata(metadata: dict[str, Any], code: str, store: ChromaStore, symbol_cache: SymbolCache) -> Citation:
+    repo = metadata["repo"]
     return Citation(
-        repo=metadata["repo"],
+        repo=repo,
         file_path=metadata["file_path"],
         start_line=metadata["start_line"],
         end_line=metadata["end_line"],
         label=format_symbol_label(metadata["symbol"] or None, metadata["parent_symbol"] or None),
+        code=code,
+        language=metadata["language"],
+        calls=_resolve_symbol_refs(store, repo, _parse_names(metadata.get("calls", "")), symbol_cache),
+        called_by=_resolve_symbol_refs(store, repo, _parse_names(metadata.get("called_by", "")), symbol_cache),
     )
 
 
@@ -160,10 +217,11 @@ def answer_question(
         return Answer(text="No indexed chunks to answer from. Run `repo-sage embed <repo>` first.", citations=[])
 
     documents = result["documents"][0]
-    citations = [_citation_from_metadata(m) for m in metadatas]
+    symbol_cache: SymbolCache = {}
+    citations = [_citation_from_metadata(m, d, store, symbol_cache) for m, d in zip(metadatas, documents)]
 
     related_documents, related_metadatas = _hydrate_related_chunks(store, metadatas)
-    related = [_citation_from_metadata(m) for m in related_metadatas]
+    related = [_citation_from_metadata(m, d, store, symbol_cache) for m, d in zip(related_metadatas, related_documents)]
 
     prompt = _build_prompt(question, documents, metadatas, related_documents, related_metadatas)
     messages: list[Message] = [Message(role="user", content=prompt)]

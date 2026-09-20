@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from reposage.answer import Answer, Citation, answer_question
+from reposage.answer import Answer, Citation, SymbolRef, answer_question
 from reposage.config import Config, load_config
 from reposage.embedding.model import Embedder
 from reposage.llm.client import LLMClient
@@ -112,11 +112,23 @@ def api_sandbox_status(config: Config = Depends(get_config)) -> dict:
     return {"loaded": True, **asdict(state)}
 
 
+def _symbol_ref_dict(ref: SymbolRef, repos_dir: Path, owner: str) -> dict:
+    url = None
+    if ref.repo and ref.file_path and ref.start_line is not None and ref.end_line is not None:
+        url = github_blob_url(repos_dir, owner, ref.repo, ref.file_path, ref.start_line, ref.end_line)
+    return {**asdict(ref), "url": url}
+
+
 def _citation_dict(citation: Citation, repos_dir: Path, owner: str) -> dict:
     url = github_blob_url(
         repos_dir, owner, citation.repo, citation.file_path, citation.start_line, citation.end_line
     )
-    return {**asdict(citation), "url": url}
+    return {
+        **asdict(citation),
+        "calls": [_symbol_ref_dict(ref, repos_dir, owner) for ref in citation.calls],
+        "called_by": [_symbol_ref_dict(ref, repos_dir, owner) for ref in citation.called_by],
+        "url": url,
+    }
 
 
 def _answer_to_dict(answer: Answer, repos_dir: Path, owner: str) -> dict:
