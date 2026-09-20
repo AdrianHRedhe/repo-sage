@@ -11,6 +11,12 @@ repo" sandbox.
 
 **Status:** early stage, but the whole pipeline works end to end.
 
+## Try it out
+
+A live deployment answers questions about my own public repos, plus the
+"bring your own public repo" sandbox:
+[adrianhredhe.com/services/repo_sage](https://adrianhredhe.com/services/repo_sage).
+
 ## Run the website
 
 Everything runs in Docker. You need Docker and `make`.
