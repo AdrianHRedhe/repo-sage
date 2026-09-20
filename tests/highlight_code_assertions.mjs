@@ -16,12 +16,16 @@ import assert from "node:assert";
 // bootstrap coroutine suspends at its first await and can neither touch
 // the DOM further nor reject; window.self === window.top, so the iframe
 // branch is skipped; and every DOM lookup returns a stub that accepts any
-// property or call. If page code manages to fail anyway, say so plainly
-// instead of exiting non-zero with no explanation after the assertions
-// below have already reported success.
+// property or call. Should page code fail anyway, name it for what it is -
+// but only while the page is being evaluated. Node delivers a failed
+// assertion in this module to `uncaughtException` as well (top-level await
+// below makes module evaluation asynchronous), so past that point the
+// error is simply reported as itself.
+let evaluatingPage = true;
 for (const event of ["unhandledRejection", "uncaughtException"]) {
   process.on(event, (err) => {
-    console.error(`${event} from page code outside highlightCode - not a highlighting failure:`, err);
+    if (evaluatingPage) console.error(`${event} from the page's own bootstrap, not from highlightCode:`);
+    console.error(err);
     process.exit(1);
   });
 }
@@ -49,14 +53,15 @@ class StubResizeObserver {
 
 const html = readFileSync("src/reposage/web/static/index.html", "utf8");
 const script = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join("\n");
-const { highlightCode } = new Function(
+const { highlightCode, renderAnswerMarkdown } = new Function(
   "document",
   "window",
   "localStorage",
   "fetch",
   "ResizeObserver",
-  `${script}\nreturn { highlightCode };`,
+  `${script}\nreturn { highlightCode, renderAnswerMarkdown };`,
 )(stubDocument, stubWindow, stubLocalStorage, stubFetch, StubResizeObserver);
+evaluatingPage = false;
 
 const spans = (out, cls) => out.match(new RegExp(`<span class="${cls}">([\\s\\S]*?)</span>`, "g")) || [];
 
@@ -132,6 +137,27 @@ assert.ok(spans(bareOut, "tok-keyword").length > 0, "unlabelled fence still gets
 for (const lang of ["Python", "Markdown", "CSS", "json", "", "constructor"]) {
   const out = highlightCode('<script>alert("x")</script>', lang);
   assert.ok(!out.includes("<script>"), `raw tag must stay escaped for ${lang}`);
+}
+
+// --- a fence label the fence pattern cannot match used to desynchronize
+// the whole replace pass, leaking raw backticks and the next block's label
+const answer = 'Here:\n\n```c++\nint a = 1;\n```\n\nThen:\n\n```python\nx = 1\n```\n';
+const rendered = renderAnswerMarkdown(answer, []);
+assert.ok(!rendered.includes("`"), "no backtick leaks out of a c++ fence");
+assert.ok(rendered.includes('<div class="code-lang">c++</div>'), "c++ keeps its label");
+assert.ok(rendered.includes('<div class="code-lang">python</div>'), "python keeps its label");
+const bodies = [...rendered.matchAll(/<pre><code>([\s\S]*?)<\/code><\/pre>/g)].map((m) => m[1]);
+assert.strictEqual(bodies.length, 2, "both blocks render as code");
+assert.ok(bodies[0].includes("int a = "), "c++ body stays in its own block");
+assert.ok(bodies[1].includes("x = "), "python body stays in its own block");
+assert.ok(!bodies.some((b) => b.includes("Then:")), "prose between the blocks is not captured as code");
+assert.ok(!bodies.some((b) => b.includes("python")), "no fence label leaks into a block body");
+
+// --- labels arrive normalised, whatever spacing or attributes they carry
+for (const label of ["Python", " python ", "python title=x"]) {
+  const out = renderAnswerMarkdown("```" + label + "\n# c\nx = 1\n```\n", []);
+  assert.ok(out.includes('<div class="code-lang">python</div>'), `"${label}" normalises to python`);
+  assert.strictEqual(spans(out, "tok-comment").length, 1, `"${label}" gets Python comment syntax`);
 }
 
 // Let anything the page scheduled settle before reporting success, so a
