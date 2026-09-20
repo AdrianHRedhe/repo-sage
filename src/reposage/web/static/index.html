@@ -153,14 +153,68 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, ch => chars[ch]);
 }
 
-// A small, generic (not per-language) syntax highlighter: comments,
-// strings, numbers and a keyword set merged across every language this
-// app chunks (see filters/languages.py) - not a real grammar per
-// language, so it can occasionally over/under-highlight, but it's one
-// dependency-free implementation instead of a per-language table or a
+// A small, mostly-generic syntax highlighter: comments, strings, numbers
+// and a keyword set merged across every language this app chunks (see
+// filters/languages.py) - not a real grammar per language, so it can
+// occasionally over/under-highlight, but it's one dependency-free
+// implementation instead of a per-language grammar table or a
 // third-party library. Operates on raw (unescaped) code and escapes each
 // piece itself, since escaping first would corrupt the string/quote
 // matching below.
+//
+// The one thing it does vary by language is which delimiters open a
+// comment, because getting that wrong doesn't mistint a word - it
+// swallows everything to the end of the line. Treating "#" as a comment
+// everywhere meant CSS "#main {" and "#fff;" both vanished into a
+// comment span, and a Markdown "# Heading" with it. That is a delimiter
+// map, not the per-language grammar the paragraph above rules out: the
+// tokenizer below stays single.
+const COMMENT_HASH = "#[^\\n]*";
+const COMMENT_SLASH = "//[^\\n]*";
+const COMMENT_BLOCK = "/\\*[\\s\\S]*?\\*/";
+const COMMENT_DASH = "--[^\\n]*";
+const COMMENT_MARKUP = "<!--[\\s\\S]*?-->";
+
+// Keyed by the lowercased language name, which reaches here from two
+// places: a chunk's own language (filters/languages.py) and the label on
+// a ```fence in the model's answer, so the common fence aliases are
+// listed alongside the canonical names.
+const COMMENT_SYNTAX = {
+  python: [COMMENT_HASH],
+  ruby: [COMMENT_HASH],
+  shell: [COMMENT_HASH],
+  bash: [COMMENT_HASH],
+  sh: [COMMENT_HASH],
+  zsh: [COMMENT_HASH],
+  yaml: [COMMENT_HASH],
+  yml: [COMMENT_HASH],
+  toml: [COMMENT_HASH],
+  dockerfile: [COMMENT_HASH],
+  makefile: [COMMENT_HASH],
+  make: [COMMENT_HASH],
+  // PHP and Perl accept both.
+  php: [COMMENT_HASH, COMMENT_SLASH, COMMENT_BLOCK],
+  perl: [COMMENT_HASH],
+  // "#" in CSS is an id selector or a hex colour, never a comment.
+  css: [COMMENT_BLOCK],
+  scss: [COMMENT_SLASH, COMMENT_BLOCK],
+  sql: [COMMENT_DASH, COMMENT_BLOCK],
+  html: [COMMENT_MARKUP],
+  vue: [COMMENT_MARKUP, COMMENT_SLASH, COMMENT_BLOCK],
+  xml: [COMMENT_MARKUP],
+  json: [],
+};
+
+// C-like: the majority of the languages here, and the safest guess for a
+// fence label we don't recognise.
+const DEFAULT_COMMENT_SYNTAX = [COMMENT_SLASH, COMMENT_BLOCK];
+
+// Prose, not code. Highlighting it isn't merely imprecise, it is wrong in
+// a way that is plainly visible: "#" headings become comments, an
+// apostrophe in "don't" opens a string that runs to the next one - so a
+// whole sentence renders as a string - and ordinary numbers get tinted.
+// These render escaped and untouched.
+const PROSE_LANGUAGES = new Set(["markdown", "md", "mdx", "text", "txt", "plaintext", ""]);
 const HIGHLIGHT_KEYWORDS = new Set([
   "function", "func", "def", "class", "struct", "interface", "enum", "impl", "trait", "return",
   "if", "elif", "else", "for", "while", "loop", "switch", "case", "default", "break", "continue",
@@ -175,8 +229,21 @@ const HIGHLIGHT_LITERALS = new Set([
   "true", "false", "null", "nil", "none", "None", "True", "False", "undefined", "NaN",
 ]);
 
-function highlightCode(code) {
-  const pattern = /(\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(\b\d+\.?\d*\b)|(\b[A-Za-z_][A-Za-z0-9_]*\b)/g;
+function highlightCode(code, language) {
+  const lang = (language || "").toLowerCase();
+  if (PROSE_LANGUAGES.has(lang)) return escapeHtml(code);
+
+  const comments = COMMENT_SYNTAX[lang] || DEFAULT_COMMENT_SYNTAX;
+  // A language with no comment syntax at all (JSON) still needs a group
+  // here, so the capture indices below line up. `(?!)` never matches.
+  const commentAlternation = comments.length ? comments.join("|") : "(?!)";
+  const pattern = new RegExp(
+    `(${commentAlternation})` +
+      "|(\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`)" +
+      "|(\\b\\d+\\.?\\d*\\b)" +
+      "|(\\b[A-Za-z_][A-Za-z0-9_]*\\b)",
+    "g",
+  );
   let out = "";
   let last = 0;
   let match;
@@ -258,7 +325,7 @@ function chunkHtml(c, index, citationIndex) {
     <summary>${prefix}${label}</summary>
     <div class="code-block">
       <div class="code-lang">${escapeHtml(lang)}${githubLink}</div>
-      <pre><code>${highlightCode(c.code)}</code></pre>
+      <pre><code>${highlightCode(c.code, lang)}</code></pre>
       ${lineageHtml(c, citationIndex)}
     </div>
   </details>`;
@@ -313,7 +380,7 @@ function renderAnswerMarkdown(text, allCitations) {
 
   return html.replace(/\u0000CODEBLOCK(\d+)\u0000/g, (match, i) => {
     const { lang, code } = codeBlocks[Number(i)];
-    return `<div class="code-block"><div class="code-lang">${escapeHtml(lang.toLowerCase())}</div><pre><code>${highlightCode(code)}</code></pre></div>`;
+    return `<div class="code-block"><div class="code-lang">${escapeHtml(lang.toLowerCase())}</div><pre><code>${highlightCode(code, lang)}</code></pre></div>`;
   });
 }
 
