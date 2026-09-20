@@ -1,0 +1,8 @@
+tunnel: repo-sage
+credentials-file: /etc/cloudflared/creds.json
+protocol: http2
+
+ingress:
+  - hostname: repo-sage.adrianhredhe.com
+    service: http://reposage-web:8000
+  - service: http_status:404
