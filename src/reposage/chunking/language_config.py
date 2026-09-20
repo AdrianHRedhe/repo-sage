@@ -20,8 +20,8 @@ class LanguageConfig:
     wrapper_node_types: frozenset[str] = frozenset()
     # Query that captures @call_name at every call site in a chunk's text,
     # used to build a heuristic caller/callee graph (reposage/callgraph.py).
-    # None means "not supported yet" (e.g. Scala's call-site AST shape
-    # hasn't been validated against a real repo, unlike Go/Python).
+    # None means "not supported yet" - a language can be chunked without
+    # having had its call-site AST shape validated against a real repo.
     call_query_path: Path | None = None
 
 
@@ -45,5 +45,6 @@ LANGUAGE_CONFIGS: dict[str, LanguageConfig] = {
         ts_language="scala",
         query_path=QUERIES_DIR / "scala.scm",
         container_node_types=frozenset({"class_definition", "object_definition", "trait_definition"}),
+        call_query_path=QUERIES_DIR / "scala_calls.scm",
     ),
 }

@@ -136,7 +136,9 @@ ups.
    are usually in different files. This is name-only matching, not type or
    scope resolution, so `obj.Close()` matches every `Close` in the repo. It
    is a heuristic for surfacing related code, not an exact call graph.
-   (Python and Go only.)
+   (Python, Go, and Scala. Scala additionally resolves `new Foo(...)`
+   constructors, but deliberately ignores infix calls like `a max b`,
+   since the same syntax covers `+` and `&&`.)
 5. **Embed.** Each chunk goes into a local Chroma collection along with a
    short `Calls: ... / Called by: ...` line. Caller and callee *bodies* are
    deliberately not blended in, which would dilute the embedding; the names
