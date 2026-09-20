@@ -80,6 +80,7 @@ def embed(repo_name: str | None, all_repos: bool) -> None:
     the directory is empty, which made a mis-seeded container run
     `embed "*"` instead of failing.
     """
+    from reposage.embedding.model import Embedder
     from reposage.index import index_repo
 
     config = load_config()
@@ -104,8 +105,16 @@ def embed(repo_name: str | None, all_repos: bool) -> None:
             )
         repo_names = [repo_name]
 
+    # One model for the whole run. Left to itself index_repo builds its own
+    # per repo, and a ~4GB model whose reference cycles are still waiting on
+    # the cyclic collector when the next one loads means two live copies,
+    # then three: measured 4.0GB peak after one repo, 6.6GB after two, and
+    # an OOM kill (`make seed` exiting 137) partway through the third. The
+    # `embedder` parameter exists for this; only the CLI wasn't using it.
+    embedder = Embedder(config.embedding_model)
+
     for name in repo_names:
-        stats = index_repo(config, name)
+        stats = index_repo(config, name, embedder=embedder)
         click.echo(
             f"{name}: embedded {stats.embedded}, skipped {stats.skipped} unchanged, "
             f"deleted {stats.deleted} stale chunk(s) into {config.chroma_dir}"
