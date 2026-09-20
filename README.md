@@ -119,7 +119,11 @@ ups.
 
 1. **Sync.** Clone each repo in `repos.txt` (or every public non-fork repo
    owned by `GITHUB_USER`) into `data/repos/`, or fast-forward it if already
-   cloned.
+   cloned. Clones are blobless (`--filter=blob:none`) and sparse, restricted
+   to the source extensions step 2 would keep, so git never downloads the
+   assets that dominate most repos - one repo here, 28,720 jpgs of street
+   imagery, went from 910MB to 12MB. Repos dropped from `repos.txt` have
+   their clone deleted, and `embed --all` then drops their embeddings too.
 2. **Select files.** Start from `git ls-files` so `.gitignore` is respected,
    then keep known source extensions, dropping lockfiles, minified bundles,
    and anything unusually large.

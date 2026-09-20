@@ -10,7 +10,7 @@ from reposage.config import Config
 from reposage.embedding.model import Embedder
 from reposage.filters.include import list_included_files
 from reposage.index import index_repo
-from reposage.sync import clone_or_update, clone_url_for
+from reposage.sync import SPARSE_CHECKOUT_PATTERNS, clone_or_update, clone_url_for
 
 # Bounds on what the sandbox will clone+embed - it's cloning a repo the
 # owner hasn't vetted, so these exist purely to keep one submission from
@@ -160,8 +160,18 @@ def submit_sandbox_repo(
         raise SandboxError("Invalid repo name.")
 
     try:
+        # Sparse here matters more than it does for the owner's own repos:
+        # MAX_SANDBOX_FILES is only checked *after* the clone lands, so an
+        # image- or dataset-heavy submission could otherwise write gigabytes
+        # into the volume within CLONE_TIMEOUT_SECONDS before being rejected.
+        # Blobless + sparse means those bytes are never fetched at all.
         clone_or_update(
-            name, clone_url_for(owner, name), repo_path, shallow=True, timeout=CLONE_TIMEOUT_SECONDS
+            name,
+            clone_url_for(owner, name),
+            repo_path,
+            shallow=True,
+            timeout=CLONE_TIMEOUT_SECONDS,
+            sparse_patterns=SPARSE_CHECKOUT_PATTERNS,
         )
 
         file_count = len(list_included_files(repo_path))
