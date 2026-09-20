@@ -15,11 +15,16 @@ jobs:
         with:
           enable-cache: true
 
-      # The lockfile pins a CPU-only torch (see [tool.uv.sources] in
-      # pyproject.toml). Without that, this step pulls several GB of unused
-      # nvidia-* wheels and routinely times out.
+      # --extra dev is required, not decorative: pytest lives in
+      # [project.optional-dependencies].dev while httpx lives in
+      # [dependency-groups].dev, and uv sync installs only the latter by
+      # default. Without it the run fails with "Failed to spawn: pytest".
+      #
+      # --frozen keeps the lockfile's CPU-only torch pin (see
+      # [tool.uv.sources] in pyproject.toml). Resolving fresh instead pulls
+      # several GB of unused nvidia-* wheels and routinely times out.
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync --frozen --extra dev
 
       # No network and no model download: every test that touches embedding
       # or an LLM injects a fake, so the suite runs in about a second.
