@@ -14,11 +14,18 @@ def sync() -> None:
     """Clone (or update) the repos listed in repos.txt into the local data dir.
 
     If repos.txt is empty, falls back to every public, non-fork repo owned
-    by GITHUB_USER.
+    by GITHUB_USER. Clones that are no longer listed are deleted.
     """
     config = load_config()
-    repos = sync_repos(config)
-    click.echo(f"Synced {len(repos)} repo(s) into {config.repos_dir}")
+    result = sync_repos(config)
+    if result.removed:
+        click.echo(f"Removed {len(result.removed)} unlisted repo(s): {', '.join(result.removed)}")
+    click.echo(f"Synced {len(result.synced)} repo(s) into {config.repos_dir}")
+    if result.failed:
+        raise click.ClickException(
+            f"Could not sync {len(result.failed)} repo(s): {', '.join(sorted(result.failed))}. "
+            "Check they exist and are public, or drop them from repos.txt."
+        )
 
 
 @main.command(name="list-files")
@@ -81,7 +88,7 @@ def embed(repo_name: str | None, all_repos: bool) -> None:
     `embed "*"` instead of failing.
     """
     from reposage.embedding.model import Embedder
-    from reposage.index import index_repo
+    from reposage.index import index_repo, prune_missing_repos
 
     config = load_config()
 
@@ -104,6 +111,10 @@ def embed(repo_name: str | None, all_repos: bool) -> None:
                 f"'{repo_name}' not found under {config.repos_dir}. Run `repo-sage sync` first."
             )
         repo_names = [repo_name]
+
+    if all_repos:
+        for repo, count in prune_missing_repos(config, repo_names).items():
+            click.echo(f"{repo}: deleted {count} chunk(s) - no longer synced")
 
     # One model for the whole run. Left to itself index_repo builds its own
     # per repo, and a ~4GB model whose reference cycles are still waiting on

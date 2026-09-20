@@ -40,6 +40,22 @@ class ChromaStore:
         if ids:
             self._collection.delete(ids=ids)
 
+    def repos(self) -> set[str]:
+        """Every repo name that currently has chunks stored."""
+        result = self._collection.get(include=["metadatas"])
+        return {metadata["repo"] for metadata in result["metadatas"]}
+
+    def delete_repo(self, repo: str) -> int:
+        """Delete every chunk belonging to `repo`, returning how many went.
+
+        index_repo only ever reconciles files it can still see, so a repo
+        that stops being synced altogether leaves its chunks behind - still
+        searchable, still cited, pointing at code no longer on disk.
+        """
+        existing = self._collection.get(where={"repo": repo})
+        self.delete(existing["ids"])
+        return len(existing["ids"])
+
     def upsert(self, chunks: list[Chunk], embeddings: list[list[float]]) -> None:
         if not chunks:
             return

@@ -83,3 +83,45 @@ def test_get_by_symbol_returns_none_when_missing(tmp_path: Path) -> None:
     store = ChromaStore(tmp_path / "chroma")
 
     assert store.get_by_symbol("repo", "missing") is None
+
+
+def _repo_chunk(repo: str, symbol: str) -> Chunk:
+    return Chunk(
+        repo=repo,
+        file_path="main.py",
+        language="Python",
+        node_type="function",
+        start_line=1,
+        end_line=2,
+        text="body",
+        symbol=symbol,
+    )
+
+
+def test_repos_lists_every_repo_with_stored_chunks(tmp_path: Path) -> None:
+    store = ChromaStore(tmp_path / "chroma")
+    store.upsert(
+        [_repo_chunk("alpha", "one"), _repo_chunk("beta", "two")],
+        [[1.0, 0.0], [0.0, 1.0]],
+    )
+
+    assert store.repos() == {"alpha", "beta"}
+
+
+def test_delete_repo_removes_only_that_repos_chunks(tmp_path: Path) -> None:
+    store = ChromaStore(tmp_path / "chroma")
+    keep = _repo_chunk("alpha", "one")
+    store.upsert([keep, _repo_chunk("beta", "two")], [[1.0, 0.0], [0.0, 1.0]])
+
+    assert store.delete_repo("beta") == 1
+
+    assert store.repos() == {"alpha"}
+    assert store.existing_hashes("alpha", "main.py") == {chunk_id(keep): keep.content_hash}
+
+
+def test_delete_repo_is_a_no_op_for_an_unknown_repo(tmp_path: Path) -> None:
+    store = ChromaStore(tmp_path / "chroma")
+    store.upsert([_repo_chunk("alpha", "one")], [[1.0, 0.0]])
+
+    assert store.delete_repo("never-synced") == 0
+    assert store.repos() == {"alpha"}
