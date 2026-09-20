@@ -19,7 +19,7 @@ COMPOSE = docker compose
 
 help:
 	@echo "make build   - build the image ($(PLATFORM))"
-	@echo "make up      - build if needed, start, wait until healthy"
+	@echo "make up      - build, start, wait until healthy (use after every change)"
 	@echo "make seed    - clone repos.txt repos and embed them into the data volume"
 	@echo "make tunnel  - start the app AND the public cloudflared tunnel"
 	@echo "make logs    - follow the app log"
@@ -30,10 +30,15 @@ help:
 build:
 	$(COMPOSE) build
 
+# --build on every `up` is deliberate. Without it, `up` happily leaves an
+# older image running after a code change, so a deploy silently ships
+# nothing and the site looks like the change was never merged. Layers are
+# cached, so a no-op rebuild costs a couple of seconds.
+#
 # --wait blocks until the healthcheck passes, so this returning means the
 # embedding model is loaded and questions can actually be answered.
 up:
-	$(COMPOSE) up -d --wait reposage-web
+	$(COMPOSE) up -d --build --wait reposage-web
 	@$(MAKE) --no-print-directory verify
 
 # Seeds the named volume. Safe to re-run: embed skips chunks whose content
@@ -55,7 +60,7 @@ seed:
 # not publish anything. `tunnel` additionally brings up cloudflared, which
 # makes the site reachable on the public hostname in cloudflared/config.yml.
 tunnel:
-	$(COMPOSE) up -d --wait reposage-web
+	@$(MAKE) --no-print-directory up
 	$(COMPOSE) up -d cloudflared
 
 logs:
