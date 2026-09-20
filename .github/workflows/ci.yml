@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # --extra dev is required, not decorative: pytest lives in
+      # [project.optional-dependencies].dev while httpx lives in
+      # [dependency-groups].dev, and uv sync installs only the latter by
+      # default. Without it the run fails with "Failed to spawn: pytest".
+      #
+      # --frozen keeps the lockfile's CPU-only torch pin (see
+      # [tool.uv.sources] in pyproject.toml). Resolving fresh instead pulls
+      # several GB of unused nvidia-* wheels and routinely times out.
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      # No network and no model download: every test that touches embedding
+      # or an LLM injects a fake, so the suite runs in about a second.
+      - name: Run tests
+        run: uv run pytest -q
