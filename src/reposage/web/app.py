@@ -18,7 +18,14 @@ from reposage.store.chroma_store import ChromaStore
 from reposage.web.auth import check_access_code
 from reposage.web.budget import BudgetGuard
 from reposage.web.links import github_blob_url
-from reposage.web.sandbox import SandboxError, read_sandbox_state, sandbox_config_for, submit_sandbox_repo
+from reposage.web.sandbox import (
+    MAX_SANDBOX_REPOS_PER_DAY,
+    SandboxError,
+    find_slot,
+    sandbox_config_for,
+    submit_sandbox_repo,
+    todays_slots,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -81,6 +88,12 @@ class AskRequest(BaseModel):
     question: str
     repo: str | None = None
     source: str = "main"  # "main" | "sandbox"
+    # Which of today's sandbox repos to ask about, by slot_id. Only
+    # meaningful when source == "sandbox"; omitted means the most recently
+    # loaded one, which is both the useful default for someone who just
+    # submitted a repo and what keeps a client that predates multiple
+    # slots working.
+    sandbox_slot: str | None = None
 
 
 class SandboxSubmitRequest(BaseModel):
@@ -114,10 +127,19 @@ def api_repos(config: Config = Depends(get_config)) -> dict:
 
 @app.get("/api/sandbox/status")
 def api_sandbox_status(config: Config = Depends(get_config)) -> dict:
-    state = read_sandbox_state(config)
-    if state is None:
-        return {"loaded": False}
-    return {"loaded": True, **asdict(state)}
+    """Today's sandbox slots, oldest first, plus how many remain.
+
+    Slots from previous days are deliberately not reported even though
+    their data is still on disk until the next submission expires it -
+    `todays_slots` is the same filter /api/ask applies, so the client can
+    never offer a repo that asking would reject.
+    """
+    slots = todays_slots(config)
+    return {
+        "repos": [asdict(slot) for slot in slots],
+        "slots_used": len(slots),
+        "slots_per_day": MAX_SANDBOX_REPOS_PER_DAY,
+    }
 
 
 def _symbol_ref_dict(ref: SymbolRef, repos_dir: Path, owner: str) -> dict:
@@ -183,9 +205,18 @@ def api_ask(
         raise HTTPException(status_code=429, detail="Usage limit reached - try again later.")
 
     if payload.source == "sandbox":
-        state = read_sandbox_state(config)
-        if state is None:
-            raise HTTPException(status_code=400, detail="No sandbox repo is loaded today.")
+        if payload.sandbox_slot:
+            state = find_slot(config, payload.sandbox_slot)
+            if state is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="That sandbox repo is no longer loaded - pick one of today's.",
+                )
+        else:
+            slots = todays_slots(config)
+            if not slots:
+                raise HTTPException(status_code=400, detail="No sandbox repo is loaded today.")
+            state = slots[-1]
 
         sandbox_config = sandbox_config_for(config, state.slot_id)
         # Same warm embedder as the main path - it only holds model weights

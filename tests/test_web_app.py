@@ -5,8 +5,15 @@ from conftest import make_config
 from fastapi.testclient import TestClient
 
 from reposage.answer import Answer, Citation, SymbolRef
+from reposage.config import Config
 from reposage.web import app as app_module
 from reposage.web.budget import BudgetGuard
+from reposage.web.sandbox import (
+    MAX_SANDBOX_REPOS_PER_DAY,
+    SandboxState,
+    _today,
+    _write_slots,
+)
 
 
 @pytest.fixture
@@ -25,6 +32,21 @@ def client(tmp_path: Path):
     yield TestClient(app_module.app), config
 
     app_module.app.dependency_overrides.clear()
+
+
+def _load_slots(config: Config, names: list[str]) -> list[SandboxState]:
+    """Records sandbox slots straight into the state file - the clone and
+    embed that submit_sandbox_repo would do are covered in
+    test_web_sandbox.py and are far too heavy for a route test."""
+    slots = [
+        SandboxState(
+            repo_owner="octocat", repo_name=name, loaded_at=_today(),
+            slot_id=f"{_today()}-{i:08x}", status="ready",
+        )
+        for i, name in enumerate(names)
+    ]
+    _write_slots(config, slots)
+    return slots
 
 
 def _fake_answer(*args, **kwargs) -> Answer:
@@ -80,10 +102,24 @@ def test_api_repos_lists_synced_repo_directories(client) -> None:
     assert test_client.get("/api/repos").json() == {"repos": ["csv2md"]}
 
 
-def test_api_sandbox_status_reports_unloaded_by_default(client) -> None:
+def test_api_sandbox_status_reports_no_slots_used_by_default(client) -> None:
     test_client, _ = client
 
-    assert test_client.get("/api/sandbox/status").json() == {"loaded": False}
+    assert test_client.get("/api/sandbox/status").json() == {
+        "repos": [],
+        "slots_used": 0,
+        "slots_per_day": MAX_SANDBOX_REPOS_PER_DAY,
+    }
+
+
+def test_api_sandbox_status_lists_todays_repos_oldest_first(client) -> None:
+    test_client, config = client
+    _load_slots(config, ["one", "two"])
+
+    body = test_client.get("/api/sandbox/status").json()
+
+    assert [repo["repo_name"] for repo in body["repos"]] == ["one", "two"]
+    assert body["slots_used"] == 2
 
 
 def test_api_ask_returns_answer_shape(client, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -173,5 +209,56 @@ def test_api_ask_sandbox_source_without_loaded_repo_is_400(client) -> None:
     test_client, _ = client
 
     response = test_client.post("/api/ask", json={"question": "q", "source": "sandbox"})
+
+    assert response.status_code == 400
+
+
+def test_api_ask_sandbox_uses_the_requested_slot(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    test_client, config = client
+    slots = _load_slots(config, ["one", "two", "three"])
+    asked: list[str] = []
+
+    def _record(config_, question, **kwargs):
+        asked.append(kwargs["repo"])
+        return _fake_answer()
+
+    monkeypatch.setattr(app_module, "answer_question", _record)
+
+    response = test_client.post(
+        "/api/ask", json={"question": "q", "source": "sandbox", "sandbox_slot": slots[0].slot_id}
+    )
+
+    assert response.status_code == 200
+    assert asked == ["one"]
+
+
+def test_api_ask_sandbox_without_a_slot_falls_back_to_the_newest(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A client that predates the picker - or a visitor who just loaded a
+    repo - gets the most recently loaded one rather than an error."""
+    test_client, config = client
+    _load_slots(config, ["one", "two", "three"])
+    asked: list[str] = []
+
+    def _record(config_, question, **kwargs):
+        asked.append(kwargs["repo"])
+        return _fake_answer()
+
+    monkeypatch.setattr(app_module, "answer_question", _record)
+
+    response = test_client.post("/api/ask", json={"question": "q", "source": "sandbox"})
+
+    assert response.status_code == 200
+    assert asked == ["three"]
+
+
+def test_api_ask_sandbox_with_an_unknown_slot_is_400(client) -> None:
+    test_client, config = client
+    _load_slots(config, ["one"])
+
+    response = test_client.post(
+        "/api/ask", json={"question": "q", "source": "sandbox", "sandbox_slot": "1999-01-01-deadbeef"}
+    )
 
     assert response.status_code == 400
