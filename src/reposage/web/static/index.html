@@ -48,6 +48,16 @@
     padding: 0.55rem 1.1rem; font-weight: 600; cursor: pointer; font-size: 0.9rem;
   }
   button:disabled { opacity: 0.5; cursor: default; }
+  /* The sandbox repo picker sits between two buttons and disappears
+     entirely when no repo is loaded. Taking its spacing from the next
+     label's margin-top instead of its own margin-bottom keeps the gap
+     above "Question" identical whether the picker is showing or not. */
+  /* The status line is followed directly by the next field's label, so
+     without this it butts straight into it while every other label/field
+     pair in the panel has clear separation. */
+  #sandbox-status { margin-bottom: 0.8rem; }
+  #sandbox-repo { margin-bottom: 0; }
+  #sandbox-repo-label { margin-top: 0.8rem; }
   button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
   .answer { white-space: pre-wrap; line-height: 1.5; margin-top: 1rem; }
   .answer a { color: var(--accent); }
@@ -117,11 +127,13 @@
   </div>
 
   <div id="sandbox-panel" class="panel" hidden>
-    <label for="sandbox-status">Today's sandbox repo</label>
+    <label for="sandbox-status">Today's sandbox repos</label>
     <div id="sandbox-status" class="status">Loading...</div>
     <label for="sandbox-url">Public GitHub repo URL</label>
     <input type="text" id="sandbox-url" placeholder="https://github.com/owner/repo" />
-    <button id="sandbox-submit" class="secondary">Load this repo (one slot/day)</button>
+    <button id="sandbox-submit" class="secondary">Load this repo</button>
+    <label for="sandbox-repo" id="sandbox-repo-label" hidden>Ask about</label>
+    <select id="sandbox-repo" hidden></select>
     <label for="sandbox-question" style="margin-top: 0.8rem;">Question</label>
     <textarea id="sandbox-question" rows="2" placeholder="How does X work?"></textarea>
     <button id="sandbox-ask">Ask</button>
@@ -498,24 +510,61 @@ async function loadRepos() {
   });
 }
 
-async function refreshSandboxStatus() {
+// Keeps the status line, the repo picker and the submit button in sync
+// with the server's view of today's slots. Called after every submission
+// as well as on load, so a visitor who fills the last slot sees the
+// button disable itself rather than discovering it on a 409.
+function renderSandboxStatus(status) {
   const el = document.getElementById("sandbox-status");
+  const select = document.getElementById("sandbox-repo");
+  const label = document.getElementById("sandbox-repo-label");
+  const submit = document.getElementById("sandbox-submit");
+  const repos = status.repos || [];
+  const full = repos.length >= status.slots_per_day;
+
+  const left = status.slots_per_day - repos.length;
+  el.textContent = repos.length
+    ? `${repos.length} of ${status.slots_per_day} slots used today.`
+    : "No repos loaded yet today - be the first to submit one.";
+
+  // Preserve the current pick across refreshes; a submission appends to
+  // the list rather than replacing it, so rebuilding blind would bounce
+  // the selection back to whatever was loaded first.
+  const previous = select.value;
+  select.innerHTML = "";
+  repos.forEach(repo => {
+    const opt = document.createElement("option");
+    opt.value = repo.slot_id;
+    opt.textContent = `${repo.repo_owner}/${repo.repo_name}`;
+    select.appendChild(opt);
+  });
+  select.value = repos.some(r => r.slot_id === previous) ? previous : (repos.at(-1)?.slot_id ?? "");
+
+  select.hidden = label.hidden = repos.length === 0;
+  submit.disabled = full;
+  submit.textContent = full
+    ? `All ${status.slots_per_day} slots taken - back tomorrow`
+    : `Load this repo (${left} slot${left === 1 ? "" : "s"} left today)`;
+}
+
+async function refreshSandboxStatus() {
   try {
-    const status = await api("/api/sandbox/status");
-    el.textContent = status.loaded
-      ? `${status.repo_owner}/${status.repo_name} (loaded ${status.loaded_at})`
-      : "No repo loaded yet today - be the first to submit one.";
+    renderSandboxStatus(await api("/api/sandbox/status"));
   } catch (e) {
-    el.textContent = "Could not load status.";
+    document.getElementById("sandbox-status").textContent = "Could not load status.";
+    // Being unable to read the slot count is no reason to strand a
+    // visitor with a permanently disabled button - let the submit
+    // attempt fail on the server instead, where the message is accurate.
+    document.getElementById("sandbox-submit").disabled = false;
   }
 }
 
-async function ask(question, repo, source) {
+async function ask(question, repo, source, sandboxSlot) {
   if (!question.trim()) return;
   renderError("");
   document.getElementById("result").innerHTML = `<div class="status">Thinking...</div>`;
   try {
-    const answer = await api("/api/ask", { method: "POST", body: JSON.stringify({ question, repo, source }) });
+    const answer = await api("/api/ask", { method: "POST", body: JSON.stringify({ question, repo, source, sandbox_slot: sandboxSlot ?? null }) });
     renderResult(answer);
   } catch (e) {
     renderError(e.message);
@@ -528,7 +577,7 @@ document.getElementById("main-ask").addEventListener("click", () => {
 });
 
 document.getElementById("sandbox-ask").addEventListener("click", () => {
-  ask(document.getElementById("sandbox-question").value, null, "sandbox");
+  ask(document.getElementById("sandbox-question").value, null, "sandbox", document.getElementById("sandbox-repo").value || null);
 });
 
 document.getElementById("sandbox-submit").addEventListener("click", async () => {
@@ -539,13 +588,19 @@ document.getElementById("sandbox-submit").addEventListener("click", async () => 
   document.getElementById("sandbox-status").textContent = "Cloning and embedding - this can take up to a minute...";
   try {
     const state = await api("/api/sandbox/submit", { method: "POST", body: JSON.stringify({ repo_url: url }) });
-    document.getElementById("sandbox-status").textContent = `${state.repo_owner}/${state.repo_name} (loaded ${state.loaded_at})`;
+    await refreshSandboxStatus();
+    // Point the picker at what was just loaded - refreshSandboxStatus only
+    // knows to keep an existing selection, and the new repo is the one
+    // this visitor came to ask about.
+    document.getElementById("sandbox-repo").value = state.slot_id;
+    document.getElementById("sandbox-url").value = "";
   } catch (e) {
     renderError(e.message);
     await refreshSandboxStatus();
-  } finally {
-    btn.disabled = false;
   }
+  // No `finally` re-enabling the button: refreshSandboxStatus is the sole
+  // owner of its disabled state and both paths above go through it, so
+  // re-enabling here would undo a legitimate "slots are full".
 });
 
 loadConfig();

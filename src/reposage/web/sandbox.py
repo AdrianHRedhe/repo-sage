@@ -18,6 +18,13 @@ from reposage.sync import SPARSE_CHECKOUT_PATTERNS, clone_or_update, clone_url_f
 MAX_SANDBOX_FILES = 300
 CLONE_TIMEOUT_SECONDS = 60
 
+# How many distinct repos visitors may load per UTC day. Each one costs a
+# clone plus a full embedding pass, so this is a spend/disk bound rather
+# than a fairness rule - the per-request WEB_*_REQUEST_LIMIT budget is what
+# bounds the LLM side. Slots are never reserved per visitor; whoever gets
+# here first takes the next free one.
+MAX_SANDBOX_REPOS_PER_DAY = 3
+
 _GITHUB_REPO_URL = re.compile(
     r"^https://github\.com/(?P<owner>[\w.-]+)/(?P<name>[\w.-]+?)(?:\.git)?/?$"
 )
@@ -31,7 +38,7 @@ class SandboxError(Exception):
 class SandboxState:
     repo_owner: str
     repo_name: str
-    loaded_at: str  # UTC date, "YYYY-MM-DD" - the one-slot-per-day business rule
+    loaded_at: str  # UTC date, "YYYY-MM-DD" - what MAX_SANDBOX_REPOS_PER_DAY counts
     slot_id: str  # unique per attempt - the actual storage path key, see sandbox_config_for
     status: str  # "ready" | "processing"
 
@@ -81,6 +88,9 @@ def sandbox_config_for(config: Config, slot_id: str) -> Config:
     repo submitted right after) would hit it too if attempts shared a
     path. A fresh slot_id per attempt sidesteps it unconditionally: this
     process can never reopen a path it has already deleted.
+
+    Per-slot isolation is also what lets several repos be loaded at once
+    without their embeddings sharing a collection.
     """
     return replace(config, data_dir=_sandbox_root(config) / slot_id)
 
@@ -97,17 +107,37 @@ def _new_slot_id(date: str) -> str:
     return f"{date}-{uuid4().hex[:8]}"
 
 
-def read_sandbox_state(config: Config) -> SandboxState | None:
+def read_sandbox_slots(config: Config) -> list[SandboxState]:
+    """Every slot currently recorded, oldest submission first.
+
+    A bare object (rather than a list) is the pre-multi-slot on-disk
+    format. Deployments keep this file in a named volume that survives
+    rebuilds, so an upgrade would otherwise crash on the first read until
+    someone deleted the volume by hand.
+    """
     path = _state_path(config)
     if not path.exists():
-        return None
-    return SandboxState(**json.loads(path.read_text()))
+        return []
+    raw = json.loads(path.read_text())
+    if isinstance(raw, dict):
+        raw = [raw]
+    return [SandboxState(**entry) for entry in raw]
 
 
-def _write_state(config: Config, state: SandboxState) -> None:
+def todays_slots(config: Config) -> list[SandboxState]:
+    """The slots loaded on the current UTC day - the only ones askable."""
+    today = _today()
+    return [slot for slot in read_sandbox_slots(config) if slot.loaded_at == today]
+
+
+def find_slot(config: Config, slot_id: str) -> SandboxState | None:
+    return next((slot for slot in todays_slots(config) if slot.slot_id == slot_id), None)
+
+
+def _write_slots(config: Config, slots: list[SandboxState]) -> None:
     path = _state_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(state)))
+    path.write_text(json.dumps([asdict(slot) for slot in slots]))
 
 
 def _remove_slot(config: Config, slot_id: str) -> None:
@@ -117,10 +147,29 @@ def _remove_slot(config: Config, slot_id: str) -> None:
 def cleanup_sandbox(config: Config) -> None:
     """Removes whatever sandbox data is currently recorded (if any) and
     clears the state file. Safe to call when nothing is loaded."""
-    existing = read_sandbox_state(config)
-    if existing:
-        _remove_slot(config, existing.slot_id)
+    for slot in read_sandbox_slots(config):
+        _remove_slot(config, slot.slot_id)
     _state_path(config).unlink(missing_ok=True)
+
+
+def _expire_old_slots(config: Config) -> list[SandboxState]:
+    """Drops every slot from a previous UTC day, deleting its data, and
+    returns the ones still live today.
+
+    Expiry happens on submission rather than on a timer because nothing
+    else runs in this process on a schedule; yesterday's clones therefore
+    survive until someone submits, which is the same lifetime the
+    single-slot version had.
+    """
+    slots = read_sandbox_slots(config)
+    today = _today()
+    live = [slot for slot in slots if slot.loaded_at == today]
+    if len(live) == len(slots):
+        return live
+    for stale in (slot for slot in slots if slot.loaded_at != today):
+        _remove_slot(config, stale.slot_id)
+    _write_slots(config, live)
+    return live
 
 
 def submit_sandbox_repo(
@@ -128,28 +177,35 @@ def submit_sandbox_repo(
 ) -> SandboxState:
     """Clone, chunk, and embed a visitor-submitted public repo into a
     dedicated sandbox store, separate from the owner's own showcase data -
-    one slot per UTC day, cleaned up before the next submission.
+    up to MAX_SANDBOX_REPOS_PER_DAY repos per UTC day, each in its own
+    slot, all cleared out on the first submission of the next day.
 
-    Raises SandboxError (safe to show the visitor) if today's slot is
-    already taken by a different repo, or the repo is too large for the
-    sandbox. A private repo isn't special-cased - it simply fails to
-    clone anonymously, which `clone_or_update` surfaces as a
-    subprocess.CalledProcessError, not a SandboxError.
+    Re-submitting a repo already loaded today is a no-op that returns the
+    existing slot rather than consuming another one.
+
+    Raises SandboxError (safe to show the visitor) if today's slots are
+    all taken, or the repo is too large for the sandbox. A private repo
+    isn't special-cased - it simply fails to clone anonymously, which
+    `clone_or_update` surfaces as a subprocess.CalledProcessError, not a
+    SandboxError.
     """
     owner, name = parse_github_repo_url(repo_url)
     today = _today()
 
-    existing = read_sandbox_state(config)
-    if existing and existing.loaded_at == today:
-        if (existing.repo_owner, existing.repo_name) == (owner, name):
-            return existing
-        raise SandboxError(
-            f"Today's sandbox slot is already taken by {existing.repo_owner}/{existing.repo_name} - "
-            "try again tomorrow, or ask about that one."
-        )
+    live = _expire_old_slots(config)
 
-    if existing:
-        cleanup_sandbox(config)
+    already_loaded = next(
+        (slot for slot in live if (slot.repo_owner, slot.repo_name) == (owner, name)), None
+    )
+    if already_loaded:
+        return already_loaded
+
+    if len(live) >= MAX_SANDBOX_REPOS_PER_DAY:
+        taken = ", ".join(f"{slot.repo_owner}/{slot.repo_name}" for slot in live)
+        raise SandboxError(
+            f"All {MAX_SANDBOX_REPOS_PER_DAY} sandbox slots for today are taken ({taken}) - "
+            "try again tomorrow, or ask about one of those."
+        )
 
     slot_id = _new_slot_id(today)
     sandbox_config = sandbox_config_for(config, slot_id)
@@ -187,5 +243,5 @@ def submit_sandbox_repo(
         raise
 
     state = SandboxState(repo_owner=owner, repo_name=name, loaded_at=today, slot_id=slot_id, status="ready")
-    _write_state(config, state)
+    _write_slots(config, [*live, state])
     return state

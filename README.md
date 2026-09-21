@@ -155,9 +155,12 @@ ups.
 
 The website (`src/reposage/web/`) is a FastAPI app wrapping the same
 `answer_question` the CLI uses, serving one static page with no build step.
-Its sandbox lets a visitor point it at any *other* public GitHub repo, one
-slot per UTC day, cleaned up before the next submission. Private repos fail
-to clone anonymously, so no separate check is needed.
+Its sandbox lets a visitor point it at any *other* public GitHub repo, up
+to three per UTC day. Each one gets its own isolated slot, and all of them
+are cleared out by the first submission of the next day. Re-submitting a
+repo already loaded today returns the existing slot rather than spending
+another one. Private repos fail to clone anonymously, so no separate check
+is needed.
 
 ## Deployment notes
 
@@ -199,8 +202,8 @@ exactly like a hang.
 
 Repos and embeddings live in the `reposage-data` named volume, so they
 survive rebuilds and a rebuild takes about a minute instead of re-embedding
-everything. The sandbox slot and usage counters live there too, so a restart
-no longer resets them.
+everything. The sandbox slots and usage counters live there too, so a
+restart no longer resets them.
 
 The embedding model is baked into the image instead. It is ~1.2GB and never
 changes, so it belongs in a layer, and the obvious alternative is a trap: a
