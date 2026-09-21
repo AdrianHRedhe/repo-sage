@@ -1,0 +1,73 @@
+# The GitHub half of the nightly re-index. scripts/nightly-seed.sh runs on
+# the deployment host (GitHub Actions cannot reach it, and the embeddings
+# live in a Docker volume there) and dispatches this workflow with the
+# outcome.
+#
+# Two jobs are being done here at once:
+#   - A failed seed fails this run, and GitHub emails the owner about it.
+#   - Every run, pass or fail, timestamps the run history that
+#     seed-watchdog.yml reads as a heartbeat - which is how a host that
+#     never woke up at all gets noticed.
+name: Nightly seed report
+
+on:
+  workflow_dispatch:
+    inputs:
+      status:
+        description: "Outcome reported by scripts/nightly-seed.sh"
+        required: true
+        type: choice
+        default: failure
+        options: [success, failure]
+      host:
+        description: "Machine that ran the seed"
+        required: false
+        default: unknown
+      log:
+        description: "Tail of the seed log (failures only)"
+        required: false
+        default: ""
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      # Every input reaches the shell through the environment rather than
+      # through ${{ }} interpolation. The log is arbitrary program output
+      # from another machine: pasted into a run: block it would be
+      # executed, not printed.
+      - name: Record the outcome
+        env:
+          SEED_STATUS: ${{ inputs.status }}
+          SEED_HOST: ${{ inputs.host }}
+          SEED_LOG: ${{ inputs.log }}
+        run: |
+          {
+            echo "## Nightly seed: $SEED_STATUS"
+            echo
+            echo "- Host: \`$SEED_HOST\`"
+            echo "- Reported: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$SEED_LOG" ]; then
+            {
+              echo
+              echo "<details><summary>Seed log (tail)</summary>"
+              echo
+              echo '```'
+              printf '%s\n' "$SEED_LOG"
+              echo '```'
+              echo
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          printf '%s\n' "$SEED_LOG"
+
+      - name: Fail the run when the seed failed
+        if: inputs.status != 'success'
+        env:
+          SEED_HOST: ${{ inputs.host }}
+        run: |
+          echo "::error title=Nightly seed failed::The 02:00 UTC sync + embed on $SEED_HOST did not complete. See the job summary for the log tail."
+          exit 1

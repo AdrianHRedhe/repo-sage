@@ -1,0 +1,57 @@
+# Dead man's switch for the nightly re-index.
+#
+# nightly-seed.yml only fires when the host is awake enough to report, so
+# on its own it cannot distinguish "the seed worked" from "the machine was
+# asleep, Docker was down, or cron never fired". This job watches for that
+# silence: if no seed has reported within MAX_AGE_HOURS, it fails, and
+# GitHub emails the owner exactly as it would for a failed seed.
+#
+# Note that GitHub disables scheduled workflows in a repository with no
+# activity for 60 days. In a repo this quiet that is a real possibility -
+# re-enable it from the Actions tab if the watchdog ever goes silent too.
+name: Seed watchdog
+
+on:
+  schedule:
+    # 06:00 UTC, four hours after the seed window. The seed itself is
+    # measured in minutes (see "Build natively" in the README), so this is
+    # a wide margin - but it has to be wide, because a seed still running
+    # when the watchdog fires has not reported yet and would read as a
+    # missed night.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if no seed has reported recently
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # This window has to sit between two numbers, not merely be
+          # "about a day": at 06:00 a healthy report is ~4h old, while a
+          # single missed night is already 28h old. Anything >= 28 would
+          # let the first missed seed pass and only complain 24h later;
+          # anything under ~5 would page on the hour of drift GitHub
+          # allows a scheduled workflow. 12 clears both comfortably.
+          MAX_AGE_HOURS: 12
+        run: |
+          latest=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/nightly-seed.yml/runs?per_page=1" \
+            --jq '.workflow_runs[0].created_at // empty')
+
+          if [ -z "$latest" ]; then
+            echo "::error title=Nightly seed never reported::No run of nightly-seed.yml exists. Is scripts/nightly-seed.sh scheduled on the deployment host, and is SEED_ALERT_TOKEN set?"
+            exit 1
+          fi
+
+          age_hours=$(( ( $(date -u +%s) - $(date -u -d "$latest" +%s) ) / 3600 ))
+          echo "Last seed report: $latest (${age_hours}h ago, limit ${MAX_AGE_HOURS}h)"
+
+          if [ "$age_hours" -gt "$MAX_AGE_HOURS" ]; then
+            echo "::error title=Nightly seed is silent::No seed has reported for ${age_hours}h. The deployment host may be asleep, offline, or unable to reach the GitHub API."
+            exit 1
+          fi

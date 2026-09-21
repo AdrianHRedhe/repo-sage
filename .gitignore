@@ -9,3 +9,4 @@ cloudflared/creds.json
 .pytest_cache/
 ROADMAP.md
 .DS_STORE
+logs/
