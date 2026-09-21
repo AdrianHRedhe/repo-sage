@@ -107,6 +107,7 @@ All of it lives in `.env`. Only the first two are ever required.
 | `GITHUB_TOKEN` | - | Only needed if `repos.txt` is empty, which triggers a REST call to list repos (60/hr becomes 5000/hr). A scopeless PAT is enough. |
 | `WEB_ACCESS_CODE` | - | Unset means anyone who finds the URL can spend your API budget. Recommended for a public deploy. |
 | `WEB_HOURLY_REQUEST_LIMIT` / `WEB_DAILY_REQUEST_LIMIT` | `10` / `30` | Bound worst-case spend. `0` disables that tier. |
+| `SEED_ALERT_TOKEN` | - | Only for the nightly re-index below. Lets the deploy host report a failed seed to GitHub. |
 
 The limits are sized for a few friends to try it, not for production traffic.
 There is no per-IP limiting or job queue, which would be disproportionate at
@@ -158,6 +159,80 @@ The website (`src/reposage/web/`) is a FastAPI app wrapping the same
 Its sandbox lets a visitor point it at any *other* public GitHub repo, one
 slot per UTC day, cleaned up before the next submission. Private repos fail
 to clone anonymously, so no separate check is needed.
+
+## Keeping the index fresh
+
+`repos.txt` repos drift as you push to them, so the deployment re-syncs and
+re-embeds every night at 02:00 UTC. `scripts/nightly-seed.sh` is the entry
+point, and it is a plain script on purpose - point cron, a systemd timer,
+or launchd at it, whichever the host has.
+
+```bash
+# in .env on the deployment host, so a failed seed reaches you
+SEED_ALERT_TOKEN=github_pat_...
+
+scripts/nightly-seed.sh  # run it once by hand before scheduling it
+```
+
+It wraps `make seed` rather than calling `docker compose` itself, so it
+inherits the two things that make seeding safe: the app is stopped before
+the embedder starts (see [Memory](#memory)), and the build platform is
+pinned (see [Build natively](#build-natively)). It also takes a lock, so a
+seed that overruns its window is never run twice concurrently, and keeps
+the last two runs' logs in `logs/`.
+
+### Scheduling it
+
+The job must fire at 02:00 **UTC**, which is not the same clock every
+scheduler reads.
+
+```cron
+# Linux cron - Vixie cron honours CRON_TZ
+CRON_TZ=UTC
+0 2 * * * /path/to/repo-sage/scripts/nightly-seed.sh
+```
+
+```ini
+# systemd timer
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+```
+
+launchd (macOS) fires in local time only, so a fixed entry drifts by an
+hour twice a year. Run it hourly there and let the script pick its own
+moment - `NIGHTLY_SEED_UTC_HOUR=2` makes every invocation outside that UTC
+hour exit immediately:
+
+```xml
+<key>EnvironmentVariables</key>
+<dict><key>NIGHTLY_SEED_UTC_HOUR</key><string>2</string></dict>
+<key>StartCalendarInterval</key>
+<dict><key>Minute</key><integer>0</integer></dict>
+```
+
+On an amd64 host, schedule it with `PLATFORM=linux/amd64` in the
+environment; the script passes it through to `make`.
+
+### Knowing when it breaks
+
+An unattended job that fails quietly is worse than no job, so the host
+reports every outcome to GitHub and two workflows turn that into email:
+
+| Workflow | Fires when |
+| --- | --- |
+| `.github/workflows/nightly-seed.yml` | The host reports a seed. The run fails (and notifies) if the seed failed, with the tail of the log in its summary. |
+| `.github/workflows/seed-watchdog.yml` | 06:00 UTC daily. Fails if no seed has reported in 12 hours. |
+
+The watchdog is the half that matters most: a script that never ran cannot
+report its own failure, so without it a sleeping Mac or a stopped Docker
+looks exactly like a healthy night. It reads the run history of
+`nightly-seed.yml` as a heartbeat, which is why a *successful* seed reports
+too.
+
+Both need `SEED_ALERT_TOKEN` on the host (a fine-grained PAT for this repo
+with Actions: read and write). Without it the seed still runs, but nothing
+is reported and the watchdog will say so within a day.
 
 ## Deployment notes
 
