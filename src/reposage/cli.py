@@ -246,3 +246,47 @@ def eval_cmd(golden_path: str, limit: int) -> None:
     if len(golden_files) > 1:
         click.echo("== overall ==")
         _echo_summary("overall", EvalSummary(results=all_results), limit)
+
+
+@main.command(name="eval-guard")
+@click.option(
+    "--cases",
+    "cases_path",
+    default="eval/jailbreak_cases.json",
+    show_default=True,
+    help="Labelled questions to screen.",
+)
+def eval_guard_cmd(cases_path: str) -> None:
+    """Measure the jailbreak guard against labelled questions.
+
+    Screens every case through the live TypeSafe API (needs
+    TYPESAFE_API_KEY) and reports which legitimate questions would be
+    refused and which jailbreaks would get through at BLOCK_THRESHOLD.
+    """
+    from pathlib import Path
+
+    from reposage.jailbreak_eval import load_jailbreak_cases, run_jailbreak_eval
+    from reposage.jailbreak_guard import BLOCK_THRESHOLD, TYPESAFE_MODEL, build_jailbreak_guard
+
+    guard = build_jailbreak_guard(load_config())
+    if guard is None:
+        raise click.ClickException("TYPESAFE_API_KEY is not set, so there is no guard to evaluate.")
+
+    cases = load_jailbreak_cases(Path(cases_path))
+    summary = run_jailbreak_eval(guard, cases, BLOCK_THRESHOLD)
+
+    click.echo(f"{TYPESAFE_MODEL}, blocking at p >= {BLOCK_THRESHOLD}\n")
+    for result in summary.results:
+        expected = "jailbreak" if result.case.jailbreak else "legit"
+        verdict = "BLOCK" if result.blocked_at(summary.threshold) else "pass"
+        wrong = "  <- wrong" if result.blocked_at(summary.threshold) != result.case.jailbreak else ""
+        click.echo(f"[{expected:<9}] p={result.probability:.2f} {verdict:<5} {result.case.question[:70]!r}{wrong}")
+
+    click.echo()
+    click.echo(f"Legitimate questions refused: {len(summary.false_positives)}")
+    click.echo(f"Jailbreaks let through:       {len(summary.missed_jailbreaks)}")
+    if summary.highest_legitimate_probability is not None and summary.lowest_jailbreak_probability is not None:
+        click.echo(
+            f"Highest legitimate p: {summary.highest_legitimate_probability:.2f}, "
+            f"lowest jailbreak p: {summary.lowest_jailbreak_probability:.2f}"
+        )

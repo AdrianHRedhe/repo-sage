@@ -87,6 +87,7 @@ uv run repo-sage ask "how does X work"
 | `repo-sage list-files <repo>` | The filtered file list, to sanity check before chunking. |
 | `repo-sage chunks <repo>` | The chunks for one repo, with resolved lineage. |
 | `repo-sage eval` | Retrieval quality against the golden sets in `eval/`. |
+| `repo-sage eval-guard` | Jailbreak guard accuracy against `eval/jailbreak_cases.json` (needs `TYPESAFE_API_KEY`). |
 
 Heads up on first run: `chromadb` and `sentence-transformers` pull in
 `torch`, and the first `embed` downloads a few hundred MB of model weights.
@@ -105,6 +106,7 @@ All of it lives in `.env`. Only the first two are ever required.
 | `LLM_MAX_TOKENS` | `1024` | Caps response length on either provider. |
 | `EMBEDDING_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | Any sentence-transformers model. The 4B/8B variants retrieve better if you have a GPU. |
 | `GITHUB_TOKEN` | - | Only needed if `repos.txt` is empty, which triggers a REST call to list repos (60/hr becomes 5000/hr). A scopeless PAT is enough. |
+| `TYPESAFE_API_KEY` | - | Optional. Screens each question for jailbreak attempts before the LLM sees it. Unset skips the screening. See [Jailbreak screening](#jailbreak-screening). |
 | `WEB_ACCESS_CODE` | - | Unset means anyone who finds the URL can spend your API budget. Recommended for a public deploy. |
 | `WEB_HOURLY_REQUEST_LIMIT` / `WEB_DAILY_REQUEST_LIMIT` | `10` / `30` | Bound worst-case spend. `0` disables that tier. |
 
@@ -144,12 +146,15 @@ ups.
    deliberately not blended in, which would dilute the embedding; the names
    alone add the relational signal. Re-running skips unchanged chunks and
    prunes ones that no longer exist.
-6. **Answer.** `ask` retrieves the top-k chunks, hydrates their immediate
+6. **Screen (optional).** With `TYPESAFE_API_KEY` set, the question is
+   first checked for jailbreak attempts. See
+   [Jailbreak screening](#jailbreak-screening).
+7. **Answer.** `ask` retrieves the top-k chunks, hydrates their immediate
    callers and callees with real bodies as a separate "Related code"
    section, and hands it all to the LLM. If that is not enough, the model
    can call read-only tools to list or read more of the repo, capped at 3
    rounds before it must answer.
-7. **Evaluate.** `eval` runs per-language golden question sets and reports
+8. **Evaluate.** `eval` runs per-language golden question sets and reports
    hit-rate@k and mean reciprocal rank, so retrieval changes can be compared
    against a number instead of judged by feel.
 
@@ -158,6 +163,36 @@ The website (`src/reposage/web/`) is a FastAPI app wrapping the same
 Its sandbox lets a visitor point it at any *other* public GitHub repo, one
 slot per UTC day, cleaned up before the next submission. Private repos fail
 to clone anonymously, so no separate check is needed.
+
+## Jailbreak screening
+
+With `TYPESAFE_API_KEY` set, every question (CLI and website) is first
+sent to TypeSafe's [Jev](https://docs.typesafe.ai) model with one yes/no
+question: is this message trying to make RepoSage ignore, override or
+reveal its own instructions? Jev returns a probability rather than text,
+and `src/reposage/jailbreak_guard.py` refuses the question when that
+probability is at or above `BLOCK_THRESHOLD`, before any retrieval or LLM
+call.
+
+It is tuned to rarely refuse a real question, because here a false
+positive turns away a visitor while a missed jailbreak only gets a
+read-only bot over public code to say something off-script:
+
+- **High threshold.** On `eval/jailbreak_cases.json`, legitimate questions
+  score at most ~0.25 and jailbreaks at least ~0.85. The threshold is 0.8.
+- **It knows what the indexed repos contain.** Several are LLM apps, so
+  "where is the system prompt defined?" is a fair question. The state
+  sent to Jev says so, which keeps those questions well below the
+  threshold.
+- **Fails open.** If the TypeSafe API errors or is slow (5s timeout, one
+  retry), the question goes through unscreened.
+- **Pinned model.** The threshold was measured on `jev-1.13.0`, so that
+  exact version is requested rather than `jev-latest`.
+
+Blocked questions are logged at WARNING with their probability, so
+`make logs` shows what is being refused. After changing the question,
+the threshold or the model, re-run `repo-sage eval-guard`. The case set is
+small and hand-written, so add any real question it gets wrong.
 
 ## Deployment notes
 

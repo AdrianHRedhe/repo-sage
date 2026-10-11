@@ -32,6 +32,7 @@ class Config:
     web_access_code: str
     web_hourly_request_limit: int
     web_daily_request_limit: int
+    typesafe_api_key: str
 
     @property
     def repos_dir(self) -> Path:
@@ -75,6 +76,11 @@ def load_config() -> Config:
     web_daily_raw = os.environ.get("WEB_DAILY_REQUEST_LIMIT", "").strip()
     web_daily_request_limit = int(web_daily_raw) if web_daily_raw else DEFAULT_WEB_DAILY_REQUEST_LIMIT
 
+    # Optional: when set, every question is screened for jailbreak attempts
+    # before it reaches the LLM (reposage/jailbreak_guard.py). Unset skips
+    # the screening entirely.
+    typesafe_api_key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+
     return Config(
         github_user=github_user,
         github_token=github_token,
@@ -90,4 +96,5 @@ def load_config() -> Config:
         web_access_code=web_access_code,
         web_hourly_request_limit=web_hourly_request_limit,
         web_daily_request_limit=web_daily_request_limit,
+        typesafe_api_key=typesafe_api_key,
     )

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from reposage.answer import Answer, Citation, SymbolRef, answer_question
 from reposage.config import Config, load_config
 from reposage.embedding.model import Embedder
+from reposage.jailbreak_guard import JailbreakGuard, build_jailbreak_guard
 from reposage.llm.client import LLMClient
 from reposage.llm.factory import build_llm_client
 from reposage.store.chroma_store import ChromaStore
@@ -59,6 +60,12 @@ def get_main_store() -> ChromaStore:
 @lru_cache
 def get_llm_client() -> LLMClient:
     return build_llm_client(get_config())
+
+
+# None when TYPESAFE_API_KEY is unset, which turns jailbreak screening off.
+@lru_cache
+def get_jailbreak_guard() -> JailbreakGuard | None:
+    return build_jailbreak_guard(get_config())
 
 
 @lru_cache
@@ -178,6 +185,7 @@ def api_ask(
     store: ChromaStore = Depends(get_main_store),
     client: LLMClient = Depends(get_llm_client),
     budget: BudgetGuard = Depends(get_budget_guard),
+    guard: JailbreakGuard | None = Depends(get_jailbreak_guard),
 ) -> dict:
     if not budget.allow():
         raise HTTPException(status_code=429, detail="Usage limit reached - try again later.")
@@ -198,11 +206,19 @@ def api_ask(
             limit=8,
             embedder=embedder,
             client=client,
+            guard=guard,
         )
         result = _answer_to_dict(answer, sandbox_config.repos_dir, state.repo_owner)
     else:
         answer = answer_question(
-            config, payload.question, repo=payload.repo, limit=8, embedder=embedder, store=store, client=client
+            config,
+            payload.question,
+            repo=payload.repo,
+            limit=8,
+            embedder=embedder,
+            store=store,
+            client=client,
+            guard=guard,
         )
         result = _answer_to_dict(answer, config.repos_dir, config.github_user)
 

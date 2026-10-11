@@ -28,6 +28,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1024}
+      # Optional jailbreak screening; empty turns it off.
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       # Recommended set for a public deployment - an open, uncapped
       # instance can have its budget exhausted by a stranger before the
       # friend/recruiter it's actually meant for gets to use it.
