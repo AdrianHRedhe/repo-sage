@@ -19,5 +19,6 @@ def make_config(tmp_path: Path, **overrides) -> Config:
         web_access_code="",
         web_hourly_request_limit=10,
         web_daily_request_limit=30,
+        typesafe_api_key="",
     )
     return Config(**{**base, **overrides})

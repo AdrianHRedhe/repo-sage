@@ -4,6 +4,7 @@ from typing import Any
 from reposage.chunking.chunk import format_symbol_label
 from reposage.config import Config
 from reposage.embedding.model import Embedder
+from reposage.jailbreak_guard import BLOCKED_ANSWER_TEXT, JailbreakGuard, build_jailbreak_guard
 from reposage.llm.client import LLMClient, Message, ToolCall
 from reposage.llm.factory import build_llm_client
 from reposage.store.chroma_store import ChromaStore
@@ -190,6 +191,7 @@ def answer_question(
     embedder: Embedder | None = None,
     store: ChromaStore | None = None,
     client: LLMClient | None = None,
+    guard: JailbreakGuard | None = None,
 ) -> Answer:
     """Retrieve the top-k chunks for `question` and have a local LLM
     synthesize an answer grounded in them, with citations back to
@@ -203,14 +205,22 @@ def answer_question(
     the synced repo itself, up to MAX_TOOL_ITERATIONS rounds before it's
     forced to give a final answer.
 
-    embedder/store/client default to constructing fresh instances (fine
-    for a one-shot CLI process); a caller that serves many requests from
+    When TYPESAFE_API_KEY is set, the question is first screened for
+    jailbreak attempts (see jailbreak_guard.py), and a blocked one is
+    answered with a short refusal before any retrieval or LLM work.
+
+    embedder/store/client/guard default to constructing fresh instances
+    (fine for a one-shot CLI process); a caller that serves many requests from
     one long-lived process (reposage/web/) should build these once and
     pass them in, since constructing an Embedder reloads model weights.
     """
     embedder = embedder or Embedder(config.embedding_model)
     store = store or ChromaStore(config.chroma_dir)
     client = client or build_llm_client(config)
+    guard = guard or build_jailbreak_guard(config)
+
+    if guard is not None and guard.should_block(question):
+        return Answer(text=BLOCKED_ANSWER_TEXT, citations=[])
 
     result = store.query(embedder.embed_query(question), n_results=limit, repo=repo)
     metadatas = result["metadatas"][0]

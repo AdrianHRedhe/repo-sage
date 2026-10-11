@@ -25,6 +25,7 @@ def client(tmp_path: Path):
     app_module.app.dependency_overrides[app_module.get_embedder] = lambda: object()
     app_module.app.dependency_overrides[app_module.get_main_store] = lambda: object()
     app_module.app.dependency_overrides[app_module.get_llm_client] = lambda: object()
+    app_module.app.dependency_overrides[app_module.get_jailbreak_guard] = lambda: None
     app_module.app.dependency_overrides[app_module.get_budget_guard] = lambda: BudgetGuard(
         tmp_path / "usage.json", hourly_limit=100, daily_limit=100
     )
@@ -177,6 +178,7 @@ def test_api_ask_requires_access_code_when_configured(tmp_path: Path, monkeypatc
     app_module.app.dependency_overrides[app_module.get_embedder] = lambda: object()
     app_module.app.dependency_overrides[app_module.get_main_store] = lambda: object()
     app_module.app.dependency_overrides[app_module.get_llm_client] = lambda: object()
+    app_module.app.dependency_overrides[app_module.get_jailbreak_guard] = lambda: None
     app_module.app.dependency_overrides[app_module.get_budget_guard] = lambda: BudgetGuard(
         tmp_path / "usage.json", hourly_limit=100, daily_limit=100
     )
