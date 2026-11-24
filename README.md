@@ -230,7 +230,7 @@ reports every outcome to GitHub and two workflows turn that into email:
 | Workflow | Fires when |
 | --- | --- |
 | `.github/workflows/nightly-seed.yml` | The host reports a seed. The run fails (and notifies) if the seed failed, with the tail of the log in its summary. |
-| `.github/workflows/seed-watchdog.yml` | 06:00 UTC daily. Fails if no seed has reported in 12 hours. |
+| `.github/workflows/seed-watchdog.yml` | Daily, scheduled for 06:17 UTC (GitHub often starts it hours late). Fails if no seed reported in the 12 hours before the 06:00 UTC deadline, however late the check itself runs. |
 
 The watchdog is the half that matters most: a script that never ran cannot
 report its own failure, so without it a sleeping Mac or a stopped Docker

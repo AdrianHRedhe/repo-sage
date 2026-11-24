@@ -13,12 +13,13 @@ name: Seed watchdog
 
 on:
   schedule:
-    # 06:00 UTC, four hours after the seed window. The seed itself is
-    # measured in minutes (see "Build natively" in the README), so this is
-    # a wide margin - but it has to be wide, because a seed still running
-    # when the watchdog fires has not reported yet and would read as a
-    # missed night.
-    - cron: "0 6 * * *"
+    # Nominally 06:00 UTC, four hours after the seed window. GitHub treats
+    # this as a request, not an appointment: scheduled runs here have
+    # started 7-11 hours late. The check below therefore measures against
+    # the 06:00 deadline, never against the moment the job happens to run.
+    # The off-the-hour minute avoids the top-of-hour rush that makes those
+    # delays worst.
+    - cron: "17 6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -28,15 +29,19 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Fail if no seed has reported recently
+      - name: Fail if no seed reported before the last deadline
         env:
           GH_TOKEN: ${{ github.token }}
-          # This window has to sit between two numbers, not merely be
-          # "about a day": at 06:00 a healthy report is ~4h old, while a
-          # single missed night is already 28h old. Anything >= 28 would
-          # let the first missed seed pass and only complain 24h later;
-          # anything under ~5 would page on the hour of drift GitHub
-          # allows a scheduled workflow. 12 clears both comfortably.
+          # The daily moment by which the 02:00 seed must have reported.
+          # It is four hours after the seed window - the seed itself takes
+          # minutes (see "Build natively" in the README), but a seed still
+          # running at the deadline has not reported yet and would read as
+          # a missed night.
+          DEADLINE_UTC: "06:00"
+          # How far before the deadline a report still counts. It has to
+          # sit between two numbers: a healthy report is ~4h old at the
+          # deadline, while the previous night's is ~28h old. Anything >= 28
+          # would let a single missed seed pass; 12 clears both comfortably.
           MAX_AGE_HOURS: 12
         run: |
           latest=$(gh api \
@@ -48,10 +53,23 @@ jobs:
             exit 1
           fi
 
-          age_hours=$(( ( $(date -u +%s) - $(date -u -d "$latest" +%s) ) / 3600 ))
-          echo "Last seed report: $latest (${age_hours}h ago, limit ${MAX_AGE_HOURS}h)"
+          # The most recent deadline that has already passed. A run that
+          # starts late (or is dispatched by hand) still judges that night,
+          # so the delay can no longer age a healthy report into a failure.
+          now=$(date -u +%s)
+          deadline=$(date -u -d "today $DEADLINE_UTC" +%s)
+          if [ "$now" -lt "$deadline" ]; then
+            deadline=$(date -u -d "yesterday $DEADLINE_UTC" +%s)
+          fi
+          earliest_accepted=$(( deadline - MAX_AGE_HOURS * 3600 ))
+          latest_epoch=$(date -u -d "$latest" +%s)
 
-          if [ "$age_hours" -gt "$MAX_AGE_HOURS" ]; then
-            echo "::error title=Nightly seed is silent::No seed has reported for ${age_hours}h. The deployment host may be asleep, offline, or unable to reach the GitHub API."
+          deadline_iso=$(date -u -d "@$deadline" +%Y-%m-%dT%H:%M:%SZ)
+          earliest_iso=$(date -u -d "@$earliest_accepted" +%Y-%m-%dT%H:%M:%SZ)
+          echo "Last seed report: $latest. Deadline: $deadline_iso, accepting reports since $earliest_iso."
+
+          if [ "$latest_epoch" -lt "$earliest_accepted" ]; then
+            age_hours=$(( (deadline - latest_epoch) / 3600 ))
+            echo "::error title=Nightly seed is silent::No seed had reported in the ${MAX_AGE_HOURS}h before the $deadline_iso deadline (last report ${age_hours}h before it). The deployment host may be asleep, offline, or unable to reach the GitHub API."
             exit 1
           fi
